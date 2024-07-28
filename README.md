@@ -58,6 +58,8 @@ use gluer::gen_spec;
 gen_spec!("tests/api.ts");
 ```
 
+It expects that you build your frontend statically and use it `axum`'s ability to serve static files!
+
 ### Complete Example
 
 ```rust,no_run
