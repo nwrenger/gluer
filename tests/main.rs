@@ -1,8 +1,13 @@
-use axum::{routing::get, Router};
+use axum::{routing::post, Json, Router};
 use gluer::{add_route, gen_spec};
 
-async fn root() -> &'static str {
-    "Hello, World!"
+#[derive(serde::Deserialize)]
+struct Hello {
+    _name: String,
+}
+
+async fn root(Json(_hello): Json<Hello>) -> Json<&'static str> {
+    "Hello World!".into()
 }
 
 #[tokio::test]
@@ -10,9 +15,9 @@ async fn root() -> &'static str {
 async fn main_test() {
     let mut app = Router::new();
 
-    add_route!(app, "/", get(root).post(root));
+    add_route!(app, "/", post(root));
 
-    gen_spec!("test", "0.1.0", "tests/test.yaml");
+    gen_spec!("tests/api.ts");
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8080")
         .await

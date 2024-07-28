@@ -1,20 +1,13 @@
 #![doc = include_str!("../README.md")]
 
+mod extractors;
+
+use crate::extractors::{extract_function, extract_struct, resolve_path};
 use lazy_static::lazy_static;
-use okapi::openapi3::{
-    MediaType, Object, OpenApi, Operation, Parameter, ParameterValue, RefOr, Response, Responses,
-    SchemaObject,
-};
 use proc_macro as pc;
 use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
-use std::{
-    collections::{BTreeMap, HashMap},
-    env::current_dir,
-    fmt,
-    io::Write,
-    sync::Mutex,
-};
+use std::{fmt, io::Write, sync::Mutex};
 use syn::{parenthesized, parse::Parse, spanned::Spanned};
 
 fn s_err(span: proc_macro2::Span, msg: impl fmt::Display) -> syn::Error {
@@ -26,6 +19,7 @@ lazy_static! {
 }
 
 /// Adds a route to the router. Use for each api endpoint you want to expose to the frontend.
+/// `Inline Functions` are not supported because of rust limitations of inferring types in macros.
 #[proc_macro]
 pub fn add_route(input: pc::TokenStream) -> pc::TokenStream {
     match add_route_inner(input.into()) {
@@ -46,7 +40,7 @@ fn add_route_inner(input: TokenStream) -> syn::Result<TokenStream> {
         method,
         r#fn,
         params,
-        responses,
+        response,
     } in &handler
     {
         let fn_name = r#fn.segments.last().unwrap().ident.to_string();
@@ -63,7 +57,7 @@ fn add_route_inner(input: TokenStream) -> syn::Result<TokenStream> {
             method: method.to_string(),
             fn_name,
             params,
-            responses: responses.clone(),
+            response: response.clone(),
         });
     }
 
@@ -99,7 +93,7 @@ struct MethodCall {
     method: syn::Ident,
     r#fn: syn::Path,
     params: Vec<syn::FnArg>,
-    responses: HashMap<String, String>,
+    response: String,
 }
 
 impl Parse for MethodCall {
@@ -109,61 +103,18 @@ impl Parse for MethodCall {
         parenthesized!(content in input);
         let r#fn: syn::Path = content.parse()?;
 
-        // Retrieve the function name as a string
         let fn_name = r#fn.segments.last().unwrap().ident.to_string();
+        let segments = r#fn.segments.iter().map(|s| s.ident.to_string()).collect();
 
-        // Determine the file to parse based on the path segments
-        let segments: Vec<_> = r#fn
-            .segments
-            .iter()
-            .map(|seg| seg.ident.to_string())
-            .collect();
-        let current_dir = current_dir().map_err(|_| {
-            syn::Error::new(
-                proc_macro2::Span::call_site(),
-                "Failed to get current directory",
-            )
-        })?;
+        let file_path = resolve_path(segments)?;
 
-        let file_path = if segments.len() == 1 {
-            // Function is in the same file, check if it's in main.rs or lib.rs (for tests)
-            let main_path = current_dir.join("src/main.rs");
-            let lib_path = current_dir.join("src/lib.rs");
-            if main_path.exists() {
-                main_path
-            } else if lib_path.exists() {
-                current_dir.join("tests/main.rs")
-            } else {
-                return Err(syn::Error::new(
-                    proc_macro2::Span::call_site(),
-                    "Neither main.rs nor lib.rs found",
-                ));
-            }
-        } else {
-            // Function is in a different module
-            let module_path = &segments[0];
-            let file_path_mod = current_dir.join(format!("src/{}/mod.rs", module_path));
-            let file_path_alt = current_dir.join(format!("src/{}.rs", module_path));
-            if file_path_mod.exists() {
-                file_path_mod
-            } else if file_path_alt.exists() {
-                file_path_alt
-            } else {
-                return Err(syn::Error::new(
-                    proc_macro2::Span::call_site(),
-                    format!("Module file not found for {}", module_path),
-                ));
-            }
-        };
-
-        let (params, responses) =
-            extract_function_params_and_responses_from_file(&fn_name, file_path.to_str().unwrap())?;
+        let (params, response) = extract_function(&fn_name, file_path)?;
 
         Ok(MethodCall {
             method,
             r#fn,
             params,
-            responses,
+            response,
         })
     }
 }
@@ -178,62 +129,16 @@ impl ToTokens for MethodCall {
         });
     }
 }
-
-fn extract_function_params_and_responses_from_file(
-    fn_name: &str,
-    file_path: &str,
-) -> syn::Result<(Vec<syn::FnArg>, HashMap<String, String>)> {
-    let source = std::fs::read_to_string(file_path)
-        .map_err(|e| syn::Error::new(proc_macro2::Span::mixed_site(), e.to_string()))?;
-    let syntax = syn::parse_file(&source)?;
-
-    let mut params_map: HashMap<String, Vec<syn::FnArg>> = HashMap::new();
-    let mut responses_map: HashMap<String, HashMap<String, String>> = HashMap::new();
-
-    for item in syntax.items {
-        if let syn::Item::Fn(syn::ItemFn { sig, .. }) = item {
-            let fn_name = sig.ident.to_string();
-            let params: Vec<syn::FnArg> = sig.inputs.iter().cloned().collect();
-            params_map.insert(fn_name.clone(), params);
-
-            let mut responses = HashMap::new();
-            let ty: String = match sig.output {
-                syn::ReturnType::Default => "()".to_string(),
-                syn::ReturnType::Type(_, ty) => ty.into_token_stream().to_string(),
-            };
-
-            responses.insert("200".to_string(), ty);
-            responses_map.insert(fn_name, responses);
-        }
-    }
-
-    let params = params_map.get(fn_name).cloned().ok_or_else(|| {
-        syn::Error::new(
-            proc_macro2::Span::call_site(),
-            "Function parameters not found",
-        )
-    })?;
-
-    let responses = responses_map.get(fn_name).cloned().ok_or_else(|| {
-        syn::Error::new(
-            proc_macro2::Span::call_site(),
-            "Function responses not found",
-        )
-    })?;
-
-    Ok((params, responses))
-}
-
 struct Route {
     route: String,
     method: String,
     fn_name: String,
-    // should be syn::Type but that's not thread safe
+    // Should be syn::Type but that's not thread safe
     params: Vec<String>,
-    responses: HashMap<String, String>,
+    response: String,
 }
 
-/// Generates an OpenAPI spec from the routes added with `add_route!`. Specify the title, version of the spec, and path to save the spec to.
+/// Generates an api ts file from the routes added with `add_route!`. Specify the path to save the api to.
 #[proc_macro]
 pub fn gen_spec(input: pc::TokenStream) -> pc::TokenStream {
     match gen_spec_inner(input.into()) {
@@ -247,130 +152,132 @@ fn gen_spec_inner(input: TokenStream) -> syn::Result<TokenStream> {
     let args = syn::parse2::<GenArgs>(input)?;
 
     let path = args.path.value();
-    let title = args.title.value();
-    let version = args.version.value();
 
     let routes = ROUTES.lock().unwrap();
-    let mut openapi = OpenApi::new();
-    openapi.info.title = title;
-    openapi.info.version = version;
+
+    let mut ts_functions = String::new();
+    let mut ts_interfaces = String::new();
 
     for route in routes.iter() {
-        let mut path_item = openapi.paths.get(&route.route).cloned().unwrap_or_default();
+        let fn_name = route.method.clone() + "_" + &route.fn_name;
+        let method = &route.method;
+        let url = &route.route;
 
-        let operation = Operation {
-            operation_id: Some(route.fn_name.clone() + "_" + &route.method),
-            parameters: route
-                .params
-                .iter()
-                .filter_map(|param| {
-                    if param.starts_with("State<") {
-                        None
-                    } else {
-                        Some(RefOr::Object(Parameter {
-                            name: param.clone(),
-                            location: route.method.clone(),
-                            description: None,
-                            required: true,
-                            deprecated: false,
-                            allow_empty_value: false,
-                            value: ParameterValue::Schema {
-                                style: None,
-                                explode: None,
-                                allow_reserved: true,
-                                schema: SchemaObject::default(),
-                                example: None,
-                                examples: None,
-                            },
-                            extensions: Object::default(),
-                        }))
-                    }
-                })
-                .collect(),
-            request_body: None,
-            responses: Responses {
-                responses: route
-                    .responses
-                    .iter()
-                    .map(|(status, ty)| {
-                        (
-                            status.clone(),
-                            RefOr::Object(Response {
-                                description: format!("{} response", status),
-                                content: {
-                                    let mut content = BTreeMap::new();
-                                    content.insert(
-                                        "application/json".to_string(),
-                                        MediaType {
-                                            schema: Some(SchemaObject::new_ref(ty.to_string())),
-                                            example: None,
-                                            examples: None,
-                                            encoding: BTreeMap::default(),
-                                            extensions: BTreeMap::default(),
-                                        },
-                                    );
-                                    content
-                                },
-                                headers: BTreeMap::default(),
-                                links: BTreeMap::default(),
-                                extensions: Object::default(),
-                            }),
-                        )
-                    })
-                    .collect(),
-                ..Default::default()
-            },
-            deprecated: false,
-            security: None,
-            servers: None,
-            extensions: Object::default(),
-            ..Default::default()
-        };
+        let mut param_names = vec![];
+        let mut param_types = vec![];
 
-        match route.method.as_str() {
-            "get" => path_item.get = Some(operation),
-            "post" => path_item.post = Some(operation),
-            "put" => path_item.put = Some(operation),
-            "delete" => path_item.delete = Some(operation),
-            _ => {
-                return Err(s_err(
-                    span,
-                    "Unsupported HTTP method ".to_string() + &route.method,
-                ))
+        for param in &route.params {
+            if param.contains("Json") {
+                let struct_name = param
+                    .split('<')
+                    .nth(1)
+                    .unwrap()
+                    .split('>')
+                    .next()
+                    .unwrap()
+                    .trim();
+                param_names.push("data".to_string());
+                param_types.push(struct_name.to_string());
+
+                let file_path =
+                    resolve_path(struct_name.split("::").map(|f| f.to_string()).collect())?;
+
+                let interface =
+                    generate_ts_interface(struct_name, extract_struct(struct_name, file_path)?);
+                ts_interfaces.push_str(&interface);
+            } else {
+                let param_name = param.split(':').next().unwrap().trim().to_string();
+                let param_type = convert_rust_type_to_ts(param.split(':').nth(1).unwrap().trim());
+                param_names.push(param_name.clone());
+                param_types.push(param_type);
             }
         }
 
-        openapi.paths.insert(route.route.clone(), path_item);
-    }
+        let params_str = param_names
+            .iter()
+            .zip(param_types.iter())
+            .map(|(name, ty)| format!("{}: {}", name, ty))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let response_type = convert_rust_type_to_ts(&route.response.clone());
 
-    let spec_string = serde_yaml::to_string(&openapi)
-        .map_err(|e| s_err(span, format!("Failed to serialize OpenAPI spec: {}", e)))?;
+        let body_assignment = if param_names.contains(&"data".to_string()) {
+            "JSON.stringify(data)"
+        } else {
+            "undefined"
+        };
+
+        let function = format!(
+            r#"export async function {fn_name}({params_str}): Promise<{response_type} | any> {{
+    const response = await fetch("{url}", {{
+        method: "{method}",
+        headers: {{
+            "Content-Type": "application/json"
+        }},
+        body: {body_assignment}
+    }});
+    return response.json();
+}}
+
+"#,
+            fn_name = fn_name,
+            params_str = params_str,
+            response_type = response_type,
+            url = url,
+            method = method.to_uppercase(),
+            body_assignment = body_assignment
+        );
+
+        ts_functions.push_str(&function);
+    }
 
     let mut file = std::fs::File::create(path)
         .map_err(|e| s_err(span, format!("Failed to create file: {}", e)))?;
-    file.write_all(spec_string.as_bytes())
+    file.write_all(ts_interfaces.as_bytes())
+        .map_err(|e| s_err(span, format!("Failed to write to file: {}", e)))?;
+    file.write_all(ts_functions.as_bytes())
         .map_err(|e| s_err(span, format!("Failed to write to file: {}", e)))?;
 
     Ok(quote! {})
 }
 
+fn convert_rust_type_to_ts(rust_type: &str) -> String {
+    let rust_type = rust_type.trim();
+    match rust_type {
+        "str" | "String" => "string".to_string(),
+        "usize" | "isize" | "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" | "f32"
+        | "f64" => "number".to_string(),
+        "bool" => "boolean".to_string(),
+        "()" => "void".to_string(),
+        t if t.starts_with("Vec <") => format!("{}[]", convert_rust_type_to_ts(&t[5..t.len() - 1])),
+        t if t.starts_with("Option <") => convert_rust_type_to_ts(&t[8..t.len() - 1]),
+        t if t.starts_with("Result <") => convert_rust_type_to_ts(&t[8..t.len() - 1]),
+        t if t.starts_with("Json <") => convert_rust_type_to_ts(&t[6..t.len() - 1]),
+        t if t.starts_with('&') => convert_rust_type_to_ts(&t[1..]),
+        t if t.starts_with("'static") => convert_rust_type_to_ts(&t[8..]),
+        t => t.to_string(),
+    }
+}
+
+fn generate_ts_interface(struct_name: &str, fields: Vec<(String, String)>) -> String {
+    let mut interface = format!("export interface {} {{\n", struct_name);
+
+    for (field_name, field_type) in fields {
+        let field_type = convert_rust_type_to_ts(&field_type);
+        interface.push_str(&format!("    {}: {};\n", field_name, field_type));
+    }
+
+    interface.push_str("}\n\n");
+    interface
+}
+
 struct GenArgs {
-    title: syn::LitStr,
-    version: syn::LitStr,
     path: syn::LitStr,
 }
 
 impl Parse for GenArgs {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let title = input.parse()?;
-        <syn::Token![,]>::parse(input)?;
-        let version = input.parse()?;
-        <syn::Token![,]>::parse(input)?;
         let path = input.parse()?;
-        Ok(GenArgs {
-            title,
-            version,
-            path,
-        })
+        Ok(GenArgs { path })
     }
 }
