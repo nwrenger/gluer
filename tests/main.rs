@@ -3,11 +3,11 @@ use gluer::{add_route, gen_spec};
 
 #[derive(serde::Deserialize)]
 struct Hello {
-    _name: String,
+    name: String,
 }
 
-async fn root(Json(_hello): Json<Hello>) -> Json<&'static str> {
-    "Hello World!".into()
+async fn root(Json(hello): Json<Hello>) -> Json<String> {
+    hello.name.into()
 }
 
 #[tokio::test]

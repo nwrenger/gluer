@@ -1,5 +1,5 @@
 export interface Hello {
-    _name: string;
+    name: string;
 }
 
 export async function post_root(data: Hello): Promise<string | any> {
