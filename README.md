@@ -12,7 +12,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-light_magic = "0.2.1"
+light_magic = "0.2.2"
 ```
 
 ## Disclaimer
@@ -23,6 +23,7 @@ Please be informed that this crate is in a very early state and is expected to w
 - Inferring the input and output types of functions (but only `Json<...>` for inputs)
 - Converting them to ts types
 - Generating the ts file with the functions and data types
+- Using types from other modules works now but only if there are not 2 or more times nested from the router implementation
 
 ## How to use
 

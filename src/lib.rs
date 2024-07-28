@@ -106,9 +106,9 @@ impl Parse for MethodCall {
         let fn_name = r#fn.segments.last().unwrap().ident.to_string();
         let segments = r#fn.segments.iter().map(|s| s.ident.to_string()).collect();
 
-        let file_path = resolve_path(segments)?;
+        let file_paths = resolve_path(input.span(), segments)?;
 
-        let (params, response) = extract_function(&fn_name, file_path)?;
+        let (params, response) = extract_function(input.span(), &fn_name, file_paths)?;
 
         Ok(MethodCall {
             method,
@@ -168,22 +168,29 @@ fn gen_spec_inner(input: TokenStream) -> syn::Result<TokenStream> {
 
         for param in &route.params {
             if param.contains("Json") {
-                let struct_name = param
+                let struct_path = param
                     .split('<')
                     .nth(1)
                     .unwrap()
                     .split('>')
                     .next()
                     .unwrap()
-                    .trim();
+                    .to_string();
+
+                let struct_name = struct_path.split("::").last().unwrap().trim().to_string();
+
                 param_names.push("data".to_string());
                 param_types.push(struct_name.to_string());
 
-                let file_path =
-                    resolve_path(struct_name.split("::").map(|f| f.to_string()).collect())?;
+                let file_paths = resolve_path(
+                    span,
+                    struct_path.split("::").map(|f| f.to_string()).collect(),
+                )?;
 
-                let interface =
-                    generate_ts_interface(struct_name, extract_struct(struct_name, file_path)?);
+                let interface = generate_ts_interface(
+                    &struct_name,
+                    extract_struct(span, &struct_name, file_paths)?,
+                );
                 ts_interfaces.push_str(&interface);
             } else {
                 let param_name = param.split(':').next().unwrap().trim().to_string();
