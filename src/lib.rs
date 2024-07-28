@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 use lazy_static::lazy_static;
 use okapi::openapi3::{
     MediaType, Object, OpenApi, Operation, Parameter, ParameterValue, RefOr, Response, Responses,
