@@ -73,7 +73,7 @@ async fn main() {
 
     add_route!(app, "/", get(root).post(root));
 
-    gen_spec!("test", "0.1.0", "tests/test.json");
+    gen_spec!("test", "0.1.0", "tests/test.yaml");
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8080")
         .await
