@@ -118,14 +118,14 @@ impl ToTokens for MethodCall {
 
 /// Generates an api ts file from the routes added with `add_route!`. Specify the path to save the api to.
 #[proc_macro]
-pub fn gen_ts(input: pc::TokenStream) -> pc::TokenStream {
-    match gen_ts_inner(input.into()) {
+pub fn api(input: pc::TokenStream) -> pc::TokenStream {
+    match api_inner(input.into()) {
         Ok(result) => result.into(),
         Err(e) => e.into_compile_error().into(),
     }
 }
 
-fn gen_ts_inner(input: TokenStream) -> syn::Result<TokenStream> {
+fn api_inner(input: TokenStream) -> syn::Result<TokenStream> {
     let span = input.span();
     let args = syn::parse2::<GenArgs>(input)?;
     let path = args.path.value();
@@ -341,14 +341,14 @@ impl Parse for GenArgs {
 
 /// Put here inside the functions which should be used by the api.
 #[proc_macro]
-pub fn fun(input: pc::TokenStream) -> pc::TokenStream {
-    match fun_inner(input.into()) {
+pub fn fns(input: pc::TokenStream) -> pc::TokenStream {
+    match fns_inner(input.into()) {
         Ok(result) => result.into(),
         Err(e) => e.into_compile_error().into(),
     }
 }
 
-fn fun_inner(input: TokenStream) -> syn::Result<TokenStream> {
+fn fns_inner(input: TokenStream) -> syn::Result<TokenStream> {
     let span = input.span();
     let items = syn::parse2::<syn::File>(input.clone())?;
 

@@ -30,23 +30,23 @@ Please be informed that this crate is in a very early state and is expected to w
 
 ### Step 1: Define Parameters and Functions
 
-Start by using the `#[param]` and `fun!` macros to define your data structures and functions. These macros give `gluer` access to the necessary code for type inference and conversion.
+Start by using the `#[param]` and `fns!` macros to define your data structures and functions. These macros give `gluer` access to the necessary code for type inference and conversion.
 
 ```rust
 use axum::{
     Json,
 };
-use gluer::{fun, param};
+use gluer::{fns, param};
 
-// Define a parameter with the param macro
+// Define a parameter with the param macro used by the functions down below
 #[param]
 #[derive(Default, serde::Serialize)]
 struct Book {
     // imagine some fields here
 }
 
-// Define functions with the fun macro
-fun! {
+// Wrap the functions with the fun macro
+fns! {
     async fn root() -> Json<String> {
         "Hello, World!".to_string().into()
     }
@@ -66,10 +66,10 @@ use axum::{
     Router,
     Json,
 };
-use gluer::{add_route, fun};
+use gluer::{add_route, fns};
 
 // a part of the function above
-fun! {
+fns! {
     async fn root() -> String {
         "Hello, World!".to_string()
     }
@@ -87,15 +87,15 @@ app = app.route("/", get(root));
 add_route!(app, "/hello-world", get(hello));
 ```
 
-### Step 3: Generate API Specification
+### Step 3: Generate API
 
-Generate the API specification file using the `gen_ts!` macro. This macro generates the TypeScript file at compile time.
+Generate the API file using the `api!` macro. This macro generates the TypeScript file at compile time.
 
 ```rust
-use gluer::gen_ts;
+use gluer::api;
 
-// Generate the TypeScript API specification
-gen_ts!("tests/api.ts");
+// Generate the TypeScript API
+api!("tests/api.ts");
 ```
 
 ### Complete Example
@@ -104,7 +104,7 @@ Below is a complete example demonstrating the use of gluer with `axum`:
 
 ```rust,no_run
 use axum::{routing::get, Json, Router};
-use gluer::{add_route, fun, gen_ts, param};
+use gluer::{add_route, fns, api, param};
 
 #[param]
 #[derive(serde::Serialize, serde::Deserialize, Default)]
@@ -112,7 +112,7 @@ struct Hello {
     name: String,
 }
 
-fun! {
+fns! {
     async fn add_root(Json(hello): Json<Hello>) -> Json<Hello> {
         hello.into()
     }
@@ -127,7 +127,7 @@ async fn main() {
 
     add_route!(app, "/", get(fetch_root).post(add_root));
 
-    gen_ts!("tests/api.ts");
+    api!("tests/api.ts");
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8080")
         .await
