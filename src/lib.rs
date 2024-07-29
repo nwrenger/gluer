@@ -1,230 +1,44 @@
-#![doc = include_str!("../README.md")]
+pub use gluer_macros::{add_route, cached};
 
-use once_cell::sync::Lazy;
-use proc_macro as pc;
-use proc_macro2::TokenStream;
-use quote::{quote, ToTokens};
-use std::{
-    collections::BTreeMap,
-    fmt,
-    io::Write,
-    sync::{Arc, RwLock},
-};
-use syn::{parenthesized, parse::Parse, spanned::Spanned};
+use std::collections::BTreeMap;
+use std::fs::File;
+use std::io::Write;
+use std::path::Path;
 
-fn s_err(span: proc_macro2::Span, msg: impl fmt::Display) -> syn::Error {
-    syn::Error::new(span, msg)
-}
-
-fn logic_err(span: proc_macro2::Span) -> syn::Error {
-    s_err(
-        span,
-        "Fatal logic error when trying to extract data from rust types",
-    )
-}
-
-#[derive(Default)]
-struct GlobalState {
-    routes: RwLock<Vec<Route>>,
-    structs: RwLock<BTreeMap<String, Vec<StructField>>>,
-    functions: RwLock<BTreeMap<String, Function>>,
-}
-
-impl GlobalState {
-    fn instance() -> &'static Arc<GlobalState> {
-        static INSTANCE: Lazy<Arc<GlobalState>> = Lazy::new(|| Arc::new(GlobalState::default()));
-        &INSTANCE
-    }
-
-    fn add_route(route: Route) {
-        let state = GlobalState::instance();
-        let mut routes = state.routes.write().unwrap();
-        routes.push(route);
-    }
-
-    fn add_struct(name: String, fields: Vec<StructField>) {
-        let state = GlobalState::instance();
-        let mut structs = state.structs.write().unwrap();
-        structs.insert(name, fields);
-    }
-
-    fn add_function(name: String, function: Function) {
-        let state = GlobalState::instance();
-        let mut functions = state.functions.write().unwrap();
-        functions.insert(name, function);
-    }
-
-    fn get_routes() -> Vec<Route> {
-        let state = GlobalState::instance();
-        let routes = state.routes.read().unwrap();
-        routes.clone()
-    }
-
-    fn get_struct(name: &str) -> Option<Vec<StructField>> {
-        let state = GlobalState::instance();
-        let structs = state.structs.read().unwrap();
-        structs.get(name).cloned()
-    }
-
-    fn get_function(name: &str) -> Option<Function> {
-        let state = GlobalState::instance();
-        let functions = state.functions.read().unwrap();
-        functions.get(name).cloned()
-    }
-}
-
-#[derive(Clone)]
-struct Route {
-    route: String,
-    method: String,
-    fn_name: String,
-}
-
-#[derive(Clone)]
-struct Function {
-    params: BTreeMap<String, String>,
-    response: String,
-}
-
-#[derive(Clone)]
-struct StructField {
-    ident: String,
-    ty: String,
-}
-
-/// Adds a route to the router. Use for each api endpoint you want to expose to the frontend.
-/// `Inline Functions` are currently not supported.
-#[proc_macro]
-pub fn add_route(input: pc::TokenStream) -> pc::TokenStream {
-    match add_route_inner(input.into()) {
-        Ok(result) => result.into(),
-        Err(e) => e.into_compile_error().into(),
-    }
-}
-
-fn add_route_inner(input: TokenStream) -> syn::Result<TokenStream> {
-    let span = input.span();
-    let args = syn::parse2::<RouterArgs>(input)?;
-
-    let ident = args.ident;
-    let route = args.route;
-    let handler = args.handler;
-
-    for MethodCall { method, r#fn } in &handler {
-        let fn_name = r#fn
-            .segments
-            .last()
-            .ok_or_else(|| logic_err(span))?
-            .ident
-            .to_string();
-
-        GlobalState::add_route(Route {
-            route: route.clone(),
-            method: method.to_string(),
-            fn_name,
-        });
-    }
-
-    Ok(quote! {
-        #ident = #ident.route(#route, #(#handler).*);
-    })
-}
-
-struct RouterArgs {
-    ident: syn::Ident,
-    route: String,
-    handler: Vec<MethodCall>,
-}
-
-impl Parse for RouterArgs {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let ident = input.parse()?;
-        input.parse::<syn::Token![,]>()?;
-        let route = input.parse::<syn::LitStr>()?.value();
-        input.parse::<syn::Token![,]>()?;
-        let handler = input.parse_terminated(MethodCall::parse, syn::Token![.])?;
-        let handler: Vec<MethodCall> = handler.into_iter().collect();
-
-        Ok(RouterArgs {
-            ident,
-            route,
-            handler,
-        })
-    }
-}
-
-struct MethodCall {
-    method: syn::Ident,
-    r#fn: syn::Path,
-}
-
-impl Parse for MethodCall {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let method: syn::Ident = input.parse()?;
-        let content;
-        parenthesized!(content in input);
-        let r#fn: syn::Path = content.parse()?;
-
-        Ok(MethodCall { method, r#fn })
-    }
-}
-
-impl ToTokens for MethodCall {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        let method = &self.method;
-        let r#fn = &self.r#fn;
-
-        tokens.extend(quote! {
-            #method(#r#fn)
-        });
-    }
-}
-
-/// Generates an api ts file from the routes added with `add_route!`. Specify the path to save the api to.
-#[proc_macro]
-pub fn api(input: pc::TokenStream) -> pc::TokenStream {
-    match api_inner(input.into()) {
-        Ok(result) => result.into(),
-        Err(e) => e.into_compile_error().into(),
-    }
-}
-
-fn api_inner(input: TokenStream) -> syn::Result<TokenStream> {
-    let span = input.span();
-    let args = syn::parse2::<GenArgs>(input)?;
-    let path = args.path.value();
-
-    let routes = GlobalState::get_routes();
-
+/// Generates an api ts file from the routes added with `add_route!`. Specify the `path`, `routes`, `fns` and `structs`.
+pub fn gen_ts<P: AsRef<Path>>(
+    path: P,
+    routes: Vec<(&str, &str, &str)>,       // (url, method, fn_name)
+    fns: &[(&str, &[(&str, &str)], &str)], // (fn_name, params, response)
+    structs: &[(&str, &[(&str, &str)])],   // (struct_name, fields)
+) -> Result<(), String> {
     let mut ts_functions = BTreeMap::new();
     let mut ts_interfaces = BTreeMap::new();
 
-    for route in routes.iter() {
-        let fn_name = &route.fn_name;
-        let method = &route.method;
-        let url = &route.route;
-
-        let function = GlobalState::get_function(fn_name).ok_or_else(|| {
-            s_err(
-                span,
+    for (url, method, fn_name) in routes {
+        let function = fns
+            .iter()
+            .find(|&&(name, _, _)| fn_name == name)
+            .ok_or_else(|| {
                 format!(
-                    "Function '{}' not found in the cache, mind adding it with #[cached]",
+                    "Function '{}' not found in the provided functions list",
                     fn_name
-                ),
-            )
-        })?;
+                )
+            })?;
 
-        let ty = collect_params(&function, span, &mut ts_interfaces)?;
+        println!("function: {:?}", function);
 
-        let response_type = collect_response_type(&function.response, span, &mut ts_interfaces)?;
+        let (fn_name, params, response) = function;
+        let params_type = collect_params(params, &mut ts_interfaces, structs)?;
+        let response_type = collect_response(response, &mut ts_interfaces, structs)?;
 
-        let params_str = if !ty.is_empty() {
-            format!("params: {}", ty)
+        let params_str = if !params_type.is_empty() {
+            format!("params: {}", params_type)
         } else {
             String::new()
         };
 
-        let body_assignment = if !ty.is_empty() {
+        let body_assignment = if !params_type.is_empty() {
             "JSON.stringify(params)"
         } else {
             "undefined"
@@ -251,112 +65,96 @@ fn api_inner(input: TokenStream) -> syn::Result<TokenStream> {
             body_assignment = body_assignment
         );
 
-        ts_functions.insert(fn_name.to_owned(), function_str);
+        ts_functions.insert(fn_name.to_string(), function_str);
     }
 
-    write_to_file(path, ts_interfaces, ts_functions, span)?;
+    write_to_file(path, ts_interfaces, ts_functions)?;
 
-    Ok(quote! {})
+    Ok(())
 }
 
 fn collect_params(
-    function: &Function,
-    span: proc_macro2::Span,
+    params: &[(&str, &str)],
     ts_interfaces: &mut BTreeMap<String, String>,
-) -> syn::Result<String> {
-    for param in &function.params {
-        if param.1.contains("Json") {
-            let struct_name = extract_struct_name(span, param.1)?;
-            if let Some(fields) = GlobalState::get_struct(&struct_name) {
+    structs: &[(&str, &[(&str, &str)])],
+) -> Result<String, String> {
+    for &(_, param_type) in params {
+        if param_type.contains("Json") {
+            let struct_name = extract_struct_name(param_type)?;
+            if let Some(fields) = structs
+                .iter()
+                .find(|&&(s_name, _)| s_name == struct_name)
+                .map(|(_, fields)| fields)
+            {
                 ts_interfaces
-                    .entry(struct_name.clone())
-                    .or_insert_with(|| generate_ts_interface(&struct_name.clone(), fields));
+                    .entry(struct_name.to_string())
+                    .or_insert_with(|| generate_ts_interface(&struct_name, fields));
                 return Ok(struct_name);
             } else {
-                let interface = convert_rust_type_to_ts(&struct_name);
-                if let Some(_interface) = interface {
-                    return Ok(struct_name);
-                } else {
-                    return Err(s_err(
-                        span,
-                        format!(
-                            "Struct '{}' not found in the cache, mind adding it with #[cached]",
-                            struct_name
-                        ),
-                    ));
-                }
+                return Err(format!(
+                    "Struct '{}' not found in the provided structs list",
+                    struct_name
+                ));
             }
         }
     }
     Ok(String::new())
 }
 
-fn collect_response_type(
+fn collect_response(
     response: &str,
-    span: proc_macro2::Span,
     ts_interfaces: &mut BTreeMap<String, String>,
-) -> syn::Result<String> {
+    structs: &[(&str, &[(&str, &str)])],
+) -> Result<String, String> {
     let response = response.replace(' ', "");
     if let Some(response_type) = convert_rust_type_to_ts(&response) {
         return Ok(response_type);
     }
 
     if response.contains("Json") {
-        let struct_name = extract_struct_name(span, &response)?;
-        if let Some(fields) = GlobalState::get_struct(&struct_name) {
+        let struct_name = extract_struct_name(&response)?;
+        if let Some(fields) = structs
+            .iter()
+            .find(|&&(s_name, _)| s_name == struct_name)
+            .map(|(_, fields)| fields)
+        {
             ts_interfaces
-                .entry(struct_name.clone())
+                .entry(struct_name.to_string())
                 .or_insert_with(|| generate_ts_interface(&struct_name, fields));
             return Ok(struct_name);
         }
     }
 
-    Err(s_err(
-        span,
-        format!(
-            "Struct '{}' not found in the cache, mind adding it with #[cached]",
-            response
-        ),
+    Err(format!(
+        "Struct '{}' not found in the provided structs list",
+        response
     ))
 }
 
-fn extract_struct_name(span: proc_macro2::Span, type_str: &str) -> syn::Result<String> {
+fn extract_struct_name(type_str: &str) -> Result<String, String> {
     type_str
         .split('<')
         .nth(1)
         .and_then(|s| s.split('>').next())
-        .map(|s| {
-            Ok(s.split("::")
-                .last()
-                .ok_or_else(|| logic_err(span))?
-                .trim()
-                .to_string())
-        })
-        .ok_or_else(|| {
-            s_err(
-                span,
-                format!("Failed to extract struct name from '{}'", type_str),
-            )
-        })?
+        .map(|s| s.split("::").last().unwrap_or("").trim().to_string())
+        .ok_or_else(|| format!("Failed to extract struct name from '{}'", type_str))
 }
 
-fn write_to_file(
-    path: String,
+fn write_to_file<P: AsRef<Path>>(
+    path: P,
     ts_interfaces: BTreeMap<String, String>,
     ts_functions: BTreeMap<String, String>,
-    span: proc_macro2::Span,
-) -> syn::Result<()> {
-    let mut file = std::fs::File::create(path)
-        .map_err(|e| s_err(span, format!("Failed to create file: {}", e)))?;
+) -> Result<(), String> {
+    let mut file = File::create(path).map_err(|e| format!("Failed to create file: {}", e))?;
 
     for interface in ts_interfaces.values() {
         file.write_all(interface.as_bytes())
-            .map_err(|e| s_err(span, format!("Failed to write to file: {}", e)))?;
+            .map_err(|e| format!("Failed to write to file: {}", e))?;
     }
 
     for function in ts_functions.values() {
         file.write_all(function.as_bytes())
-            .map_err(|e| s_err(span, format!("Failed to write to file: {}", e)))?;
+            .map_err(|e| format!("Failed to write to file: {}", e))?;
     }
 
     Ok(())
@@ -383,120 +181,12 @@ fn convert_rust_type_to_ts(rust_type: &str) -> Option<String> {
     })
 }
 
-fn generate_ts_interface(struct_name: &str, fields: Vec<StructField>) -> String {
+fn generate_ts_interface(struct_name: &str, fields: &[(&str, &str)]) -> String {
     let mut interface = format!("export interface {} {{\n", struct_name);
-    for StructField { ident, ty } in fields {
-        let ty = convert_rust_type_to_ts(&ty).unwrap_or_default();
+    for &(ident, ty) in fields {
+        let ty = convert_rust_type_to_ts(ty).unwrap_or_default();
         interface.push_str(&format!("    {}: {};\n", ident, ty));
     }
     interface.push_str("}\n\n");
     interface
-}
-
-struct GenArgs {
-    path: syn::LitStr,
-}
-
-impl Parse for GenArgs {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let path = input.parse()?;
-        Ok(GenArgs { path })
-    }
-}
-
-/// Put before structs or functions to be used and cached by the `glue` crate.
-#[proc_macro_attribute]
-pub fn cached(args: pc::TokenStream, input: pc::TokenStream) -> pc::TokenStream {
-    match cached_inner(args.into(), input.into()) {
-        Ok(result) => result.into(),
-        Err(e) => e.into_compile_error().into(),
-    }
-}
-
-fn cached_inner(args: TokenStream, input: TokenStream) -> syn::Result<TokenStream> {
-    let span = input.span();
-    let input = syn::parse2::<syn::Item>(input)?;
-    let _args = syn::parse2::<NoArgs>(args)?;
-
-    match input.clone() {
-        syn::Item::Struct(syn::ItemStruct { ident, fields, .. }) => {
-            GlobalState::add_struct(ident.to_string(), {
-                let mut field_vec = Vec::new();
-
-                for field in fields {
-                    let ident = field.ident.ok_or_else(|| logic_err(span))?.to_string();
-                    let ty = field.ty.into_token_stream().to_string();
-                    field_vec.push(StructField { ident, ty });
-                }
-
-                field_vec
-            });
-        }
-        syn::Item::Fn(item_fn) => {
-            let fn_name = item_fn.sig.ident.to_string();
-            let params = item_fn.sig.inputs.clone();
-            let response = match item_fn.sig.output.clone() {
-                syn::ReturnType::Type(_, ty) => ty.into_token_stream().to_string(),
-                _ => "()".to_string(),
-            };
-
-            GlobalState::add_function(
-                fn_name,
-                Function {
-                    params: {
-                        let mut map = BTreeMap::new();
-                        for param in params {
-                            match param {
-                                syn::FnArg::Typed(syn::PatType { ty, pat, .. }) => {
-                                    if pat.to_token_stream().to_string() == "Json" {
-                                        let struct_path = ty.to_token_stream().to_string();
-                                        let struct_name = struct_path
-                                            .split("::")
-                                            .last()
-                                            .ok_or_else(|| logic_err(span))?
-                                            .trim();
-                                        let fields = GlobalState::get_struct(struct_name).ok_or_else(|| {
-                                        s_err(
-                                            span,
-                                            format!(
-                                                "Struct '{}' not found in the cache, mind adding it with #[cached]",
-                                                struct_name
-                                            ),
-                                        )
-                                    })?;
-
-                                        for StructField { ident, ty } in fields {
-                                            map.insert(ident, ty);
-                                        }
-                                    } else {
-                                        let ty = ty.to_token_stream().to_string();
-                                        map.insert(pat.to_token_stream().to_string(), ty);
-                                    }
-                                }
-                                syn::FnArg::Receiver(_) => {
-                                    return Err(s_err(span, "Receiver not allowed"));
-                                }
-                            }
-                        }
-                        map
-                    },
-                    response,
-                },
-            );
-        }
-        _ => return Err(s_err(span, "Expected struct or function")),
-    }
-
-    Ok(quote! {#input})
-}
-
-struct NoArgs {}
-
-impl Parse for NoArgs {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        if !input.is_empty() {
-            return Err(input.error("No arguments expected"));
-        }
-        Ok(NoArgs {})
-    }
 }
