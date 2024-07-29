@@ -4,7 +4,7 @@ use once_cell::sync::Lazy;
 use proc_macro as pc;
 use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
-use std::{collections::HashMap, fmt, io::Write, sync::RwLock};
+use std::{collections::BTreeMap, fmt, io::Write, sync::RwLock};
 use syn::{parenthesized, parse::Parse, spanned::Spanned};
 
 fn s_err(span: proc_macro2::Span, msg: impl fmt::Display) -> syn::Error {
@@ -29,7 +29,7 @@ struct Route {
 }
 
 struct Function {
-    params: HashMap<String, String>,
+    params: BTreeMap<String, String>,
     response: String,
 }
 
@@ -40,10 +40,10 @@ struct StructField {
 }
 
 static ROUTES: Lazy<RwLock<Vec<Route>>> = Lazy::new(|| RwLock::new(Vec::new()));
-static STRUCTS: Lazy<RwLock<HashMap<String, Vec<StructField>>>> =
-    Lazy::new(|| RwLock::new(HashMap::new()));
-static FUNCTIONS: Lazy<RwLock<HashMap<String, Function>>> =
-    Lazy::new(|| RwLock::new(HashMap::new()));
+static STRUCTS: Lazy<RwLock<BTreeMap<String, Vec<StructField>>>> =
+    Lazy::new(|| RwLock::new(BTreeMap::new()));
+static FUNCTIONS: Lazy<RwLock<BTreeMap<String, Function>>> =
+    Lazy::new(|| RwLock::new(BTreeMap::new()));
 
 /// Adds a route to the router. Use for each api endpoint you want to expose to the frontend.
 /// `Inline Functions` are currently not supported.
@@ -151,8 +151,8 @@ fn api_inner(input: TokenStream) -> syn::Result<TokenStream> {
     let functions = FUNCTIONS.read().map_err(|e| lock_err(span, e))?;
     let structs = STRUCTS.read().map_err(|e| lock_err(span, e))?;
 
-    let mut ts_functions = HashMap::new();
-    let mut ts_interfaces = HashMap::new();
+    let mut ts_functions = BTreeMap::new();
+    let mut ts_interfaces = BTreeMap::new();
 
     for route in routes.iter() {
         let fn_name = &route.fn_name;
@@ -217,9 +217,9 @@ fn api_inner(input: TokenStream) -> syn::Result<TokenStream> {
 
 fn collect_params(
     function: &Function,
-    structs: &HashMap<String, Vec<StructField>>,
+    structs: &BTreeMap<String, Vec<StructField>>,
     span: proc_macro2::Span,
-    ts_interfaces: &mut HashMap<String, String>,
+    ts_interfaces: &mut BTreeMap<String, String>,
 ) -> syn::Result<String> {
     for param in &function.params {
         if param.1.contains("Json") {
@@ -250,9 +250,9 @@ fn collect_params(
 
 fn collect_response_type(
     response: &str,
-    structs: &HashMap<String, Vec<StructField>>,
+    structs: &BTreeMap<String, Vec<StructField>>,
     span: proc_macro2::Span,
-    ts_interfaces: &mut HashMap<String, String>,
+    ts_interfaces: &mut BTreeMap<String, String>,
 ) -> syn::Result<String> {
     let response = response.replace(" ", "");
     if let Some(response_type) = convert_rust_type_to_ts(&response) {
@@ -300,8 +300,8 @@ fn extract_struct_name(span: proc_macro2::Span, type_str: &str) -> syn::Result<S
 
 fn write_to_file(
     path: String,
-    ts_interfaces: HashMap<String, String>,
-    ts_functions: HashMap<String, String>,
+    ts_interfaces: BTreeMap<String, String>,
+    ts_functions: BTreeMap<String, String>,
     span: proc_macro2::Span,
 ) -> syn::Result<()> {
     let mut file = std::fs::File::create(path)
@@ -405,7 +405,7 @@ fn cached_inner(args: TokenStream, input: TokenStream) -> syn::Result<TokenStrea
                 fn_name.clone(),
                 Function {
                     params: {
-                        let mut map = HashMap::new();
+                        let mut map = BTreeMap::new();
                         for param in params {
                             match param {
                                 syn::FnArg::Typed(syn::PatType { ty, pat, .. }) => {
