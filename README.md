@@ -20,7 +20,7 @@ light_magic = "0.3.0"
 Please be informed that this crate is in a very early state and is expected to work in not every case. Open a Issue if you encounter one! What works is:
 
 - Defining the routing and api generation as outlined in [How to use](#how-to-use)
-- Inferring the input and output types of functions (but only `Json<...>` for inputs)
+- Inferring the input and output types of functions (but only `Json<...>`)
 - Converting them to ts types
 - Generating the ts file with the functions and data types
 
