@@ -1,19 +1,20 @@
 use axum::{routing::get, Json, Router};
-use gluer::{add_route, fns, api, param};
+use gluer::{add_route, api, cached};
 
-#[param]
+#[cached]
+async fn fetch_root() -> String {
+    String::from("Hello, World!")
+}
+
+#[cached]
 #[derive(serde::Serialize, serde::Deserialize, Default)]
 struct Hello {
     name: String,
 }
 
-fns! {
-    async fn add_root(Json(hello): Json<Hello>) -> Json<Hello> {
-        hello.into()
-    }
-    async fn fetch_root() -> Json<Hello> {
-        Hello::default().into()
-    }
+#[cached]
+async fn add_root(Json(hello): Json<Hello>) -> Json<Hello> {
+    hello.into()
 }
 
 #[tokio::test]

@@ -11,6 +11,17 @@ fn s_err(span: proc_macro2::Span, msg: impl fmt::Display) -> syn::Error {
     syn::Error::new(span, msg)
 }
 
+fn lock_err(span: proc_macro2::Span, e: impl fmt::Display) -> syn::Error {
+    s_err(span, format!("Failed to acquire lock: {}", e))
+}
+
+fn logic_err(span: proc_macro2::Span) -> syn::Error {
+    s_err(
+        span,
+        "Fatal logic error when trying to extract data from rust types",
+    )
+}
+
 struct Route {
     route: String,
     method: String,
@@ -45,6 +56,7 @@ pub fn add_route(input: pc::TokenStream) -> pc::TokenStream {
 }
 
 fn add_route_inner(input: TokenStream) -> syn::Result<TokenStream> {
+    let span = input.span();
     let args = syn::parse2::<RouterArgs>(input)?;
 
     let ident = args.ident;
@@ -52,9 +64,14 @@ fn add_route_inner(input: TokenStream) -> syn::Result<TokenStream> {
     let handler = args.handler;
 
     for MethodCall { method, r#fn } in &handler {
-        let fn_name = r#fn.segments.last().unwrap().ident.to_string();
+        let fn_name = r#fn
+            .segments
+            .last()
+            .ok_or_else(|| logic_err(span))?
+            .ident
+            .to_string();
 
-        ROUTES.write().unwrap().push(Route {
+        ROUTES.write().map_err(|e| lock_err(span, e))?.push(Route {
             route: route.clone(),
             method: method.to_string(),
             fn_name,
@@ -130,9 +147,9 @@ fn api_inner(input: TokenStream) -> syn::Result<TokenStream> {
     let args = syn::parse2::<GenArgs>(input)?;
     let path = args.path.value();
 
-    let routes = ROUTES.read().unwrap();
-    let functions = FUNCTIONS.read().unwrap();
-    let structs = STRUCTS.read().unwrap();
+    let routes = ROUTES.read().map_err(|e| lock_err(span, e))?;
+    let functions = FUNCTIONS.read().map_err(|e| lock_err(span, e))?;
+    let structs = STRUCTS.read().map_err(|e| lock_err(span, e))?;
 
     let mut ts_functions = HashMap::new();
     let mut ts_interfaces = HashMap::new();
@@ -146,7 +163,7 @@ fn api_inner(input: TokenStream) -> syn::Result<TokenStream> {
             s_err(
                 span,
                 format!(
-                    "Function '{}' not found in the cache, mind adding it with fun! {{}}",
+                    "Function '{}' not found in the cache, mind adding it with #[cached]",
                     fn_name
                 ),
             )
@@ -206,7 +223,7 @@ fn collect_params(
 ) -> syn::Result<String> {
     for param in &function.params {
         if param.1.contains("Json") {
-            let struct_name = extract_struct_name(param.1)?;
+            let struct_name = extract_struct_name(span, param.1)?;
             if let Some(fields) = structs.get(&struct_name).cloned() {
                 ts_interfaces
                     .entry(struct_name.clone())
@@ -220,7 +237,7 @@ fn collect_params(
                     return Err(s_err(
                         span,
                         format!(
-                            "Struct '{}' not found in the cache, mind adding it with #[param]",
+                            "Struct '{}' not found in the cache, mind adding it with #[cached]",
                             struct_name
                         ),
                     ));
@@ -243,7 +260,7 @@ fn collect_response_type(
     }
 
     if response.contains("Json") {
-        let struct_name = extract_struct_name(&response)?;
+        let struct_name = extract_struct_name(span, &response)?;
         if let Some(fields) = structs.get(&struct_name).cloned() {
             ts_interfaces
                 .entry(struct_name.clone())
@@ -255,24 +272,30 @@ fn collect_response_type(
     Err(s_err(
         span,
         format!(
-            "Struct '{}' not found in the cache, mind adding it with #[param]",
+            "Struct '{}' not found in the cache, mind adding it with #[cached]",
             response
         ),
     ))
 }
 
-fn extract_struct_name(type_str: &str) -> syn::Result<String> {
+fn extract_struct_name(span: proc_macro2::Span, type_str: &str) -> syn::Result<String> {
     type_str
         .split('<')
         .nth(1)
         .and_then(|s| s.split('>').next())
-        .map(|s| s.split("::").last().unwrap().trim().to_string())
+        .map(|s| {
+            Ok(s.split("::")
+                .last()
+                .ok_or_else(|| logic_err(span))?
+                .trim()
+                .to_string())
+        })
         .ok_or_else(|| {
             s_err(
-                proc_macro2::Span::call_site(),
+                span,
                 format!("Failed to extract struct name from '{}'", type_str),
             )
-        })
+        })?
 }
 
 fn write_to_file(
@@ -339,21 +362,38 @@ impl Parse for GenArgs {
     }
 }
 
-/// Put here inside the functions which should be used by the api.
-#[proc_macro]
-pub fn fns(input: pc::TokenStream) -> pc::TokenStream {
-    match fns_inner(input.into()) {
+/// Put before structs or functions to be used and cached by the `glue` crate.
+#[proc_macro_attribute]
+pub fn cached(args: pc::TokenStream, input: pc::TokenStream) -> pc::TokenStream {
+    match cached_inner(args.into(), input.into()) {
         Ok(result) => result.into(),
         Err(e) => e.into_compile_error().into(),
     }
 }
 
-fn fns_inner(input: TokenStream) -> syn::Result<TokenStream> {
+fn cached_inner(args: TokenStream, input: TokenStream) -> syn::Result<TokenStream> {
     let span = input.span();
-    let items = syn::parse2::<syn::File>(input.clone())?;
+    let input = syn::parse2::<syn::Item>(input)?;
+    let _args = syn::parse2::<NoArgs>(args)?;
 
-    for item in items.items {
-        if let syn::Item::Fn(item_fn) = item {
+    match input.clone() {
+        syn::Item::Struct(syn::ItemStruct { ident, fields, .. }) => {
+            STRUCTS
+                .write()
+                .map_err(|e| lock_err(span, e))?
+                .insert(ident.to_string(), {
+                    let mut field_vec = Vec::new();
+
+                    for field in fields {
+                        let ident = field.ident.ok_or_else(|| logic_err(span))?.to_string();
+                        let ty = field.ty.into_token_stream().to_string();
+                        field_vec.push(StructField { ident, ty });
+                    }
+
+                    field_vec
+                });
+        }
+        syn::Item::Fn(item_fn) => {
             let fn_name = item_fn.sig.ident.to_string();
             let params = item_fn.sig.inputs.clone();
             let response = match item_fn.sig.output.clone() {
@@ -361,7 +401,7 @@ fn fns_inner(input: TokenStream) -> syn::Result<TokenStream> {
                 _ => "()".to_string(),
             };
 
-            FUNCTIONS.write().unwrap().insert(
+            FUNCTIONS.write().map_err(|e| lock_err(span, e))?.insert(
                 fn_name.clone(),
                 Function {
                     params: {
@@ -371,15 +411,15 @@ fn fns_inner(input: TokenStream) -> syn::Result<TokenStream> {
                                 syn::FnArg::Typed(syn::PatType { ty, pat, .. }) => {
                                     if pat.to_token_stream().to_string() == "Json" {
                                         let struct_path = ty.to_token_stream().to_string();
-                                        let struct_name = struct_path.split("::").last().unwrap().trim();
+                                        let struct_name = struct_path.split("::").last().ok_or_else(|| logic_err(span))?.trim();
                                         let fields = STRUCTS
-                                            .read().unwrap()
+                                            .read().map_err(|e| lock_err(span, e))?
                                             .get(&struct_name.to_string())
                                             .ok_or_else(|| {
                                                 s_err(
                                                     span,
                                                     format!(
-                                                        "Struct '{}' not found in the cache, mind adding it with #[param]",
+                                                        "Struct '{}' not found in the cache, mind adding it with #[cached]",
                                                         struct_name
                                                     ),
                                                 )
@@ -404,40 +444,9 @@ fn fns_inner(input: TokenStream) -> syn::Result<TokenStream> {
                     response,
                 },
             );
-        } else {
-            return Err(s_err(span, "Expected function item"));
         }
+        _ => return Err(s_err(span, "Expected struct or function")),
     }
-
-    Ok(quote! {#input})
-}
-
-/// Put before the structs which should be used by the api.
-#[proc_macro_attribute]
-pub fn param(args: pc::TokenStream, input: pc::TokenStream) -> pc::TokenStream {
-    match param_inner(args.into(), input.into()) {
-        Ok(result) => result.into(),
-        Err(e) => e.into_compile_error().into(),
-    }
-}
-
-fn param_inner(args: TokenStream, input: TokenStream) -> syn::Result<TokenStream> {
-    let input = syn::parse2::<syn::ItemStruct>(input)?;
-    let _args = syn::parse2::<NoArgs>(args)?;
-
-    STRUCTS.write().unwrap().insert(input.ident.to_string(), {
-        let mut field_vec = Vec::new();
-
-        if let syn::Fields::Named(fields) = input.fields.clone() {
-            for field in fields.named {
-                let ident = field.ident.unwrap().to_string();
-                let ty = field.ty.into_token_stream().to_string();
-                field_vec.push(StructField { ident, ty });
-            }
-        }
-
-        field_vec
-    });
 
     Ok(quote! {#input})
 }

@@ -28,31 +28,32 @@ Please be informed that this crate is in a very early state and is expected to w
 
 `gluer` generates an api endpoint `.ts` file which expects that you build your frontend statically and host it via `axum`'s static file serving. To use it, follow these steps:
 
-### Step 1: Define Parameters and Functions
+### Step 1: Define Structs and Functions
 
-Start by using the `#[param]` and `fns!` macros to define your data structures and functions. These macros give `gluer` access to the necessary code for type inference and conversion.
+Start by using the `#[cached]` macro to define your data structures and functions. This macro gives `gluer` access to the necessary code for type inference and conversion.
 
 ```rust
 use axum::{
     Json,
 };
-use gluer::{fns, param};
+use gluer::cached;
 
-// Define a parameter with the param macro used by the functions down below
-#[param]
+// Define a struct with the cached macro
+#[cached]
 #[derive(Default, serde::Serialize)]
 struct Book {
     // imagine some fields here
 }
 
-// Wrap the functions with the fun macro
-fns! {
-    async fn root() -> Json<String> {
-        "Hello, World!".to_string().into()
-    }
-    async fn book() -> Json<Book> {
-        Book::default().into()
-    }
+// Define the functions with the cached macro
+#[cached]
+async fn root() -> Json<String> {
+    "Hello, World!".to_string().into()
+}
+
+#[cached]
+async fn book() -> Json<Book> {
+    Book::default().into()
 }
 ```
 
@@ -66,16 +67,17 @@ use axum::{
     Router,
     Json,
 };
-use gluer::{add_route, fns};
+use gluer::{add_route, cached};
 
-// a part of the function above
-fns! {
-    async fn root() -> String {
-        "Hello, World!".to_string()
-    }
-    async fn hello() -> Json<String> {
-        "Hello, World!".to_string().into()
-    }
+// done like above
+#[cached]
+async fn root() -> String {
+    "Hello, World!".to_string()
+}
+
+#[cached]
+async fn hello() -> Json<String> {
+    "Hello, World!".to_string().into()
 }
 
 let mut app: Router<()> = Router::new();
@@ -104,21 +106,22 @@ Below is a complete example demonstrating the use of gluer with `axum`:
 
 ```rust,no_run
 use axum::{routing::get, Json, Router};
-use gluer::{add_route, fns, api, param};
+use gluer::{add_route, api, cached};
 
-#[param]
+#[cached]
+async fn fetch_root() -> String {
+    String::from("Hello, World!")
+}
+
+#[cached]
 #[derive(serde::Serialize, serde::Deserialize, Default)]
 struct Hello {
     name: String,
 }
 
-fns! {
-    async fn add_root(Json(hello): Json<Hello>) -> Json<Hello> {
-        hello.into()
-    }
-    async fn fetch_root() -> Json<Hello> {
-        Hello::default().into()
-    }
+#[cached]
+async fn add_root(Json(hello): Json<Hello>) -> Json<Hello> {
+    hello.into()
 }
 
 #[tokio::main]
