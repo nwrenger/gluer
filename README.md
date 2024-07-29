@@ -4,7 +4,11 @@
 [![crates.io](https://img.shields.io/crates/d/gluer.svg)](https://crates.io/crates/gluer)
 [![docs.rs](https://docs.rs/gluer/badge.svg)](https://docs.rs/gluer)
 
-A wrapper for rust frameworks which addresses the persistent issue of redundant type and function definitions between the frontend and backend. At present, it exclusively supports the `axum` framework.
+A wrapper for Rust frameworks that eliminates redundant type and function definitions between the frontend and backend. Currently, it supports only the `axum` framework.
+
+## Origin of the Name
+
+The name "gluer" is inspired by the tool's primary function, **gluing together different parts of a Rust-based web application**. Just as glue binds different materials together to form a cohesive whole, `gluer` integrates various components of the frontend and backend, ensuring they work seamlessly without redundant code.
 
 ## Installation
 
@@ -12,17 +16,18 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-light_magic = "0.3.0"
+light_magic = "0.3.1"
 ```
 
-## Disclaimer
+## Features
 
-Please be informed that this crate is in a very early state and is expected to work in not every case. Open a Issue if you encounter one! What works is:
+Note: This crate is in an early stage and may not work in all cases. Please open an issue if you encounter any problems!
 
-- Defining the routing and api generation as outlined in [How to use](#how-to-use)
-- Inferring the input and output types of functions (but only `Json<...>` for inputs)
-- Converting them to ts types
-- Generating the ts file with the functions and data types
+- Define routing and api generation as outlined in [How to use](#how-to-use).
+- Infer input and output types of functions (currently supports only `Json<...>` for inputs).
+- Convert Rust structs to TypeScript interfaces.
+- Generate a TypeScript file with functions and data types.
+- The generated TypeScript file does not depend on any external TypeScript libraries.
 
 ## How to use
 
@@ -100,7 +105,7 @@ use gluer::api;
 api!("tests/api.ts");
 ```
 
-### Complete Example
+## Complete Example
 
 Below is a complete example demonstrating the use of gluer with `axum`:
 
