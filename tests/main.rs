@@ -24,6 +24,7 @@ async fn main_test() {
 
     add_route!(app, "/", get(fetch_root).post(add_root));
 
+    // at the end of all macros so no issue here
     api!("tests/api.ts");
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8080")

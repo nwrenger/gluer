@@ -180,7 +180,7 @@ impl ToTokens for MethodCall {
     }
 }
 
-/// Generates an api ts file from the routes added with `add_route!`. Specify the path to save the api to.
+/// Generates an api ts file from the routes added with `add_route!`. Specify the path to save the api to. Note: This macro should be used only once and needs to be at the end of all macros due to the nature of rusts macro parsing.
 #[proc_macro]
 pub fn api(input: pc::TokenStream) -> pc::TokenStream {
     match api_inner(input.into()) {
@@ -214,17 +214,17 @@ fn api_inner(input: TokenStream) -> syn::Result<TokenStream> {
             )
         })?;
 
-        let ty = collect_params(&function, span, &mut ts_interfaces)?;
+        let params_type = collect_params(&function.params, span, &mut ts_interfaces)?;
 
-        let response_type = collect_response_type(&function.response, span, &mut ts_interfaces)?;
+        let response_type = collect_response(&function.response, span, &mut ts_interfaces)?;
 
-        let params_str = if !ty.is_empty() {
-            format!("params: {}", ty)
+        let params_str = if !params_type.is_empty() {
+            format!("params: {}", params_type)
         } else {
             String::new()
         };
 
-        let body_assignment = if !ty.is_empty() {
+        let body_assignment = if !params_type.is_empty() {
             "JSON.stringify(params)"
         } else {
             "undefined"
@@ -260,11 +260,11 @@ fn api_inner(input: TokenStream) -> syn::Result<TokenStream> {
 }
 
 fn collect_params(
-    function: &Function,
+    params: &BTreeMap<String, String>,
     span: proc_macro2::Span,
     ts_interfaces: &mut BTreeMap<String, String>,
 ) -> syn::Result<String> {
-    for param in &function.params {
+    for param in params {
         if param.1.contains("Json") {
             let struct_name = extract_struct_name(span, param.1)?;
             if let Some(fields) = GlobalState::get_struct(&struct_name) {
@@ -291,7 +291,7 @@ fn collect_params(
     Ok(String::new())
 }
 
-fn collect_response_type(
+fn collect_response(
     response: &str,
     span: proc_macro2::Span,
     ts_interfaces: &mut BTreeMap<String, String>,

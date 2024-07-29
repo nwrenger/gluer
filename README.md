@@ -96,7 +96,7 @@ add_route!(app, "/hello-world", get(hello));
 
 ### Step 3: Generate API
 
-Generate the API file using the `api!` macro. This macro generates the TypeScript file at compile time.
+Generate the API file using the `api!` macro. This macro generates the TypeScript file at compile time and needs to be at the end of all macros due to the nature of rusts macro parsing.
 
 ```rust
 use gluer::api;
