@@ -5,7 +5,27 @@ use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 
-/// Generates an api ts file from the routes added with `add_route!`. Specify the `path`, `routes`, `fns` and `structs`.
+/// Generates an api ts file at the `path` from the `routes` generated via `add_route!`, `fns` generated via `#[cached]` and `structs` generated via `#[cached]`.
+/// ```rust,no_run
+/// use gluer::{add_route, cached, gen_ts};
+/// use axum::{routing::get, Router};
+/// 
+/// #[cached]
+/// async fn test() {}
+/// 
+/// let mut app: Router<()> = Router::new();
+/// let mut routes = vec![];
+/// 
+/// add_route!(routes, app, "/", get(test));
+/// 
+/// gen_ts(
+///     "tests/api.ts",
+///     routes,
+///     &[FN_TEST],
+///     &[],
+/// )
+/// .unwrap();
+/// ```
 pub fn gen_ts<P: AsRef<Path>>(
     path: P,
     routes: Vec<(&str, &str, &str)>,       // (url, method, fn_name)

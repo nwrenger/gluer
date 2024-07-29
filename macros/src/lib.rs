@@ -172,7 +172,7 @@ fn generate_struct_const(item_struct: syn::ItemStruct) -> syn::Result<TokenStrea
         .collect::<syn::Result<Vec<_>>>()?;
 
     let const_ident = syn::Ident::new(
-        &format!("CACHED_STRUCT_{}", struct_name.to_uppercase()),
+        &format!("STRUCT_{}", struct_name.to_uppercase()),
         proc_macro2::Span::call_site(),
     );
 
@@ -207,7 +207,7 @@ fn generate_fn_const(item_fn: syn::ItemFn) -> syn::Result<TokenStream> {
     };
 
     let const_ident = syn::Ident::new(
-        &format!("CACHED_FN_{}", fn_name.to_uppercase()),
+        &format!("FN_{}", fn_name.to_uppercase()),
         proc_macro2::Span::call_site(),
     );
 
