@@ -1,6 +1,6 @@
 [package]
 name = "gluer"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2021"
 authors = ["Nils Wrenger <nils@wrenger.net>"]
 description = "A wrapper for rust frameworks which addresses the persistent issue of redundant type and function definitions between the frontend and backend"
@@ -18,7 +18,7 @@ proc-macro = true
 quote = "1.0"
 syn = { version = "2.0.62", features = ["full"] }
 proc-macro2 = "1.0"
-lazy_static = "1.5.0"
+once_cell = "1.19.0"
 
 [dev-dependencies]
 axum = "0.7.5"
