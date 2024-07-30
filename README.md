@@ -16,18 +16,21 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-light_magic = "0.3.1"
+gluer = "0.4.0"
 ```
 
 ## Features
 
 Note: This crate is in an early stage and may not work in all cases. Please open an issue if you encounter any problems!
 
-- Define routing and api generation as outlined in [How to use](#how-to-use).
-- Infer input and output types of functions (currently supports only `Json<...>` for inputs).
+- Define routing and API generation as outlined in [How to use](#how-to-use).
+- Infer input and output types of functions.
+- Support `axum`'s types completely.
 - Convert Rust structs to TypeScript interfaces.
-- Generate a TypeScript file with functions and data types.
-- The generated TypeScript file does not depend on any external TypeScript libraries.
+- Generate a TypeScript file with:
+  - Functions
+  - Data types as Interfaces
+- Using no extra dependencies in the generated TypeScript file.
 
 ## How to use
 
@@ -35,28 +38,28 @@ Note: This crate is in an early stage and may not work in all cases. Please open
 
 ### Step 1: Define Structs and Functions
 
-Start by using the `#[cached]` macro to define your data structures and functions. This macro gives `gluer` access to the necessary code for type inference and conversion.
+Use the `#[metadata]` macro to define your data structures and functions. This macro allows `gluer` to generate metadata for these structs and functions as `const` values with the same visibility as the function or struct. When splitting these into other modules, you need to import these `const` values, but they are recognized by Rust's compiler, so there is no need to worry about that.
 
 ```rust
 use axum::{
     Json,
 };
-use gluer::cached;
+use gluer::metadata;
 
-// Define a struct with the cached macro
-#[cached]
+// Define a struct with the metadata macro
+#[metadata]
 #[derive(Default, serde::Serialize)]
 struct Book {
     // imagine some fields here
 }
 
-// Define the functions with the cached macro
-#[cached]
+// Define the functions with the metadata macro
+#[metadata]
 async fn root() -> Json<String> {
     "Hello, World!".to_string().into()
 }
 
-#[cached]
+#[metadata]
 async fn book() -> Json<Book> {
     Book::default().into()
 }
@@ -64,82 +67,102 @@ async fn book() -> Json<Book> {
 
 ### Step 2: Add Routes
 
-Use the `add_route!` macro to add API-important routes to your router. Note that inline functions cannot generally be used due to Rust's limitations in inferring types in macros.
+Use the `Api` wrapper around `axum`'s Router to add routes. Utilize the `extract!` macro to gather all necessary information from the functions. Note that inline functions cannot be used, as the function names of the generated TypeScript file are inferred from the handler function names.
 
 ```rust
 use axum::{
     routing::get,
-    Router,
     Json,
 };
-use gluer::{add_route, cached};
+use gluer::{Api, extract, metadata};
 
 // done like above
-#[cached]
+#[metadata]
 async fn root() -> String {
     "Hello, World!".to_string()
 }
 
-#[cached]
+#[metadata]
 async fn hello() -> Json<String> {
     "Hello, World!".to_string().into()
 }
 
-let mut app: Router<()> = Router::new();
-
-// Add non-API-important route without macro
-app = app.route("/", get(root));
-
-// Add API-important routes with the add_route macro
-add_route!(app, "/hello-world", get(hello));
+let mut app: Api<()> = Api::new()
+    // Add non-API-important routes or state by accessing axum's Router directly via inner_router
+    .inner_router(|f| f.route("/", get(root)))
+    // Add API-important routes with the route function
+    .route("/hello-world", extract!(get(hello)));
 ```
 
 ### Step 3: Generate API
 
-Generate the API file using the `api!` macro. This macro generates the TypeScript file at compile time and needs to be at the end of all macros due to the nature of rusts macro parsing.
+Generate the API file using the `generate_client` function on the `Api` struct. This generates the TypeScript file.
 
 ```rust
-use gluer::api;
+use gluer::Api;
 
-// Generate the TypeScript API
-api!("tests/api.ts");
+let app: Api<()> = Api::new();
+
+app.generate_client("tests/api.ts");
+```
+
+### Step 4: Use the Wrapped Router
+
+To start your server, get the inner router using the `into_router` function.
+
+```rust,no_run
+use gluer::Api;
+
+#[tokio::main]
+async fn main() {
+    let app: Api<()> = Api::new();
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:8080")
+            .await
+            .unwrap();
+    axum::serve(listener, app.into_router()).await.unwrap();
+}
 ```
 
 ## Complete Example
 
-Below is a complete example demonstrating the use of gluer with `axum`:
+Below is a complete example demonstrating the use of `gluer` with `axum`:
 
-```rust,no_run
-use axum::{routing::get, Json, Router};
-use gluer::{add_route, api, cached};
+```rust
+use axum::{
+    extract::{Path, Query},
+    routing::get,
+    Json,
+};
+use gluer::{extract, metadata, Api};
+use std::collections::HashMap;
 
-#[cached]
-async fn fetch_root() -> String {
-    String::from("Hello, World!")
+#[metadata]
+async fn fetch_root(Query(test): Query<HashMap<String, String>>, Path(p): Path<usize>) -> String {
+    test.get(&p.to_string()).unwrap().clone()
 }
 
-#[cached]
+#[metadata]
 #[derive(serde::Serialize, serde::Deserialize, Default)]
-struct Hello {
+pub struct Hello {
     name: String,
 }
 
-#[cached]
-async fn add_root(Json(hello): Json<Hello>) -> Json<Hello> {
-    hello.into()
+#[metadata]
+async fn add_root(Path(_): Path<usize>, Json(hello): Json<Hello>) -> Json<Vec<Hello>> {
+    vec![hello].into()
 }
 
 #[tokio::main]
 async fn main() {
-    let mut app: Router<()> = Router::new();
+    let app: Api<()> = Api::new().route("/:p", extract!(get(fetch_root).post(add_root)));
 
-    add_route!(app, "/", get(fetch_root).post(add_root));
+    app.generate_client("tests/api.ts").unwrap();
 
-    api!("tests/api.ts");
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:8080")
+    let _listener = tokio::net::TcpListener::bind("127.0.0.1:8080")
         .await
         .unwrap();
-    axum::serve(listener, app).await.unwrap();
+    // starts the server, comment in and rename `_listener` to run it
+    // axum::serve(listener, app.into_router()).await.unwrap();
 }
 ```

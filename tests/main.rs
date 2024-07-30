@@ -1,34 +1,36 @@
-use axum::{routing::get, Json, Router};
-use gluer::{add_route, api, cached};
+use axum::{
+    extract::{Path, Query},
+    routing::get,
+    Json,
+};
+use gluer::{extract, metadata, Api};
+use std::collections::HashMap;
 
-#[cached]
-async fn fetch_root() -> String {
-    String::from("Hello, World!")
+#[metadata]
+async fn fetch_root(Query(test): Query<HashMap<String, String>>, Path(p): Path<usize>) -> String {
+    test.get(&p.to_string()).unwrap().clone()
 }
 
-#[cached]
+#[metadata]
 #[derive(serde::Serialize, serde::Deserialize, Default)]
-struct Hello {
+pub struct Hello {
     name: String,
 }
 
-#[cached]
-async fn add_root(Json(hello): Json<Hello>) -> Json<Hello> {
-    hello.into()
+#[metadata]
+async fn add_root(Path(_): Path<usize>, Json(hello): Json<Hello>) -> Json<Vec<Hello>> {
+    vec![hello].into()
 }
 
 #[tokio::test]
-#[ignore = "everlasting server"]
 async fn main_test() {
-    let mut app: Router<()> = Router::new();
+    let app: Api<()> = Api::new().route("/:p", extract!(get(fetch_root).post(add_root)));
 
-    add_route!(app, "/", get(fetch_root).post(add_root));
+    app.generate_client("tests/api.ts").unwrap();
 
-    // at the end of all macros so no issue here
-    api!("tests/api.ts");
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:8080")
+    let _listener = tokio::net::TcpListener::bind("127.0.0.1:8080")
         .await
         .unwrap();
-    axum::serve(listener, app).await.unwrap();
+    // starts the server, comment in and rename `_listener` to run it
+    // axum::serve(listener, app.into_router()).await.unwrap();
 }
