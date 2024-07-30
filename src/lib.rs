@@ -4,7 +4,9 @@ pub use gluer_macros::{extract, metadata};
 
 use axum::routing::MethodRouter;
 use axum::Router;
-use std::{collections::BTreeMap, fs::File, io::Write, path::Path};
+use std::{collections::BTreeMap, fs::File, io::Write};
+
+use crate::Type::{Json, Path, Query, QueryMap, Unknown};
 
 /// Wrapper around `axum::Router` that allows for generating TypeScript API clients.
 pub struct Api<'a, S = ()> {
@@ -62,9 +64,9 @@ where
     }
 
     /// Generate frontend TypeScript API client from the API routes.
-    pub fn api<P: AsRef<Path>>(&self, path: P) -> Result<(), String> {
+    pub fn generate_client<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), String> {
         let mut ts_functions = BTreeMap::new();
-        let mut ts_interfaces = BTreeMap::new();
+        let mut ts_interfaces: BTreeMap<String, String> = BTreeMap::new();
 
         for route in &self.api_routes {
             if !route.fn_info.structs.is_empty() {
@@ -98,7 +100,7 @@ where
                         route.method,
                         route.fn_name,
                         params_type,
-                        &response_type,
+                        response_type,
                     ),
                 );
             }
@@ -157,7 +159,7 @@ fn generate_ts_interface(struct_name: &str, fields: &[Field]) -> String {
     for Field { name, ty } in fields {
         let bind = BTreeMap::new();
         let ty = ty_to_ts(ty, &bind).unwrap();
-        interface.push_str(&format!("    {}: {};\n", name, ty));
+        interface.push_str(&format!("    {}: {};\n", name, ty.unwrap()));
     }
     interface.push_str("}\n\n");
     interface
@@ -167,24 +169,45 @@ fn generate_ts_function(
     url: &str,
     method: &str,
     fn_name: &str,
-    params_type: Vec<String>,
-    response_type: &str,
+    params_type: Vec<Type<String>>,
+    response_type: Type<String>,
 ) -> String {
-    let params_str = if !params_type.is_empty() {
-        format!("data: {}", params_type.join(", "))
-    } else {
-        String::new()
-    };
+    let mut url = url.to_string();
 
-    let body_assignment = if !params_type.is_empty() {
+    let params_str = params_type
+        .iter()
+        .filter_map(|ty| match ty {
+            Json(ty) => Some(format!("data: {}", ty)),
+            Path(ty) => Some(format!("path: {}", ty)),
+            Query(ty) => Some(format!("query: {}", ty)),
+            QueryMap(ty) => Some(format!("queryMap: Record<string, {}>", ty)),
+            Unknown(_) => None,
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let body_assignment = if params_str.contains("data") {
         "JSON.stringify(data)"
     } else {
         "undefined"
     };
 
+    if params_str.contains("path") {
+        url = url.split(":").next().unwrap().to_string();
+        url += "${encodeURIComponent(path)}";
+    }
+
+    if params_str.contains("queryMap") {
+        url += "?";
+        url += "${new URLSearchParams(queryMap).toString()}";
+    } else if params_str.contains("query") {
+        url += "?";
+        url += "${encodeURIComponent(query)}";
+    }
+
     format!(
         r#"export async function {fn_name}({params_str}): Promise<{response_type}> {{
-    const response = await fetch("{url}", {{
+    const response = await fetch(`{url}`, {{
         method: "{method}",
         headers: {{
             "Content-Type": "application/json"
@@ -197,36 +220,76 @@ fn generate_ts_function(
 "#,
         fn_name = fn_name,
         params_str = params_str,
-        response_type = response_type,
+        response_type = response_type.unwrap(),
         url = url,
         method = method.to_uppercase(),
         body_assignment = body_assignment
     )
 }
 
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone)]
+enum Type<T> {
+    Unknown(T),
+    Json(T),
+    Path(T),
+    Query(T),
+    QueryMap(T),
+}
+
+impl<T> Type<T> {
+    fn unwrap(self) -> T {
+        match self {
+            Type::Unknown(t) => t,
+            Type::Json(t) => t,
+            Type::Path(t) => t,
+            Type::Query(t) => t,
+            Type::QueryMap(t) => t,
+        }
+    }
+}
+
 fn ty_to_ts<'a>(
     ty: &'a str,
     ts_interfaces: &'a BTreeMap<String, String>,
-) -> Result<String, String> {
+) -> Result<Type<String>, String> {
     if ts_interfaces.contains_key(ty) {
-        return Ok(ty.to_owned());
+        return Ok(Unknown(ty.to_string()));
     }
     Ok(match ty {
-        "str" | "String" => String::from("string"),
+        "str" | "String" => Unknown(String::from("string")),
         "usize" | "isize" | "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" | "f32"
-        | "f64" => String::from("number"),
-        "bool" => String::from("boolean"),
-        "()" => String::from("void"),
+        | "f64" => Unknown(String::from("number")),
+        "bool" => Unknown(String::from("boolean")),
+        "()" => Unknown(String::from("void")),
         t if t.starts_with("Vec<") => {
-            let ty = ty_to_ts(&t[4..t.len() - 1], ts_interfaces)?.to_string();
-            format!("{}[]", ty)
+            let ty = ty_to_ts(&t[4..t.len() - 1], ts_interfaces)?.unwrap();
+            Unknown(format!("{}[]", ty))
         }
-        t if t.starts_with("Json<") => return ty_to_ts(&t[5..t.len() - 1], ts_interfaces),
+        t if t.starts_with("Html<") => {
+            let ty = ty_to_ts(&t[5..t.len() - 1], ts_interfaces)?.unwrap();
+            Unknown(format!("{}[]", ty))
+        }
+        t if t.starts_with("Json<") => {
+            let ts_type = ty_to_ts(&t[5..t.len() - 1], ts_interfaces)?;
+            return Ok(Json(ts_type.unwrap()));
+        }
+        t if t.starts_with("Path<") => {
+            let ts_type = ty_to_ts(&t[5..t.len() - 1], ts_interfaces)?;
+            return Ok(Path(ts_type.unwrap()));
+        }
+        t if t.starts_with("Query<HashMap<") => {
+            let ts_type = ty_to_ts(&t[14..t.len() - 2], ts_interfaces)?;
+            return Ok(QueryMap(ts_type.unwrap()));
+        }
+        t if t.starts_with("Query<") => {
+            let ts_type = ty_to_ts(&t[6..t.len() - 1], ts_interfaces)?;
+            return Ok(Query(ts_type.unwrap()));
+        }
         _ => return Err(format!("Type '{}' couldn't be converted to TypeScript", ty)),
     })
 }
 
-fn write_to_file<P: AsRef<Path>>(
+fn write_to_file<P: AsRef<std::path::Path>>(
     path: P,
     ts_interfaces: BTreeMap<String, String>,
     ts_functions: BTreeMap<String, String>,

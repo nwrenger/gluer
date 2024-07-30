@@ -222,8 +222,11 @@ fn basic_rust_type(ty: &syn::Type) -> syn::Result<Option<(bool, String, String)>
             if let Some(segment) = path.segments.last() {
                 let ty_name = segment.ident.to_string();
 
-                // Skip types like State<...> and ...more in the future
-                if ty_name == "State" {
+                // Skip types like State<...> and more, see the `extract` section in axum's docs
+                if matches!(
+                    ty_name.as_ref(),
+                    "State" | "Headers" | "Bytes" | "Request" | "Extension"
+                ) {
                     return Ok(None);
                 }
 

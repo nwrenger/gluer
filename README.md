@@ -23,11 +23,14 @@ gluer = "0.4.0"
 
 Note: This crate is in an early stage and may not work in all cases. Please open an issue if you encounter any problems!
 
-- Define routing and api generation as outlined in [How to use](#how-to-use).
-- Infer input and output types of functions (currently supports only `Json<...>` for inputs, not `Path<...>` and others).
+- Define routing and API generation as outlined in [How to use](#how-to-use).
+- Infer input and output types of functions.
+- Support `axum`'s types completely.
 - Convert Rust structs to TypeScript interfaces.
-- Generate a TypeScript file with functions and data types.
-- The generated TypeScript file does not depend on any external TypeScript libraries.
+- Generate a TypeScript file with:
+  - Functions
+  - Data types as Interfaces
+- Using no extra dependencies in the generated TypeScript file.
 
 ## How to use
 
@@ -64,7 +67,7 @@ async fn book() -> Json<Book> {
 
 ### Step 2: Add Routes
 
-Use the `Api` wrapper around axum's `Router`. To add routes, use the `extract!` macro which extracts all necessary information from the functions. Note that inline functions cannot generally be used due to Rust's limitations in inferring types in macros.
+Use the `Api` wrapper around `axum`'s Router to add routes. Utilize the `extract!` macro to gather all necessary information from the functions. Note that inline functions cannot be used, as the function names of the generated TypeScript file are inferred from the handler function names.
 
 ```rust
 use axum::{
@@ -93,14 +96,14 @@ let mut app: Api<()> = Api::new()
 
 ### Step 3: Generate API
 
-Generate the API file using the `api` function on the `Api` struct. This generates the TypeScript file.
+Generate the API file using the `generate_client` function on the `Api` struct. This generates the TypeScript file.
 
 ```rust
 use gluer::Api;
 
 let app: Api<()> = Api::new();
 
-app.api("tests/api.ts");
+app.generate_client("tests/api.ts");
 ```
 
 ### Step 4: Use the Wrapped Router
@@ -126,12 +129,17 @@ async fn main() {
 Below is a complete example demonstrating the use of `gluer` with `axum`:
 
 ```rust
-use axum::{routing::get, Json};
+use axum::{
+    extract::{Path, Query},
+    routing::get,
+    Json,
+};
 use gluer::{extract, metadata, Api};
+use std::collections::HashMap;
 
 #[metadata]
-async fn fetch_root() -> &'static str {
-    "Hello, World!"
+async fn fetch_root(Query(test): Query<HashMap<String, String>>, Path(p): Path<usize>) -> String {
+    test.get(&p.to_string()).unwrap().clone()
 }
 
 #[metadata]
@@ -141,15 +149,15 @@ pub struct Hello {
 }
 
 #[metadata]
-async fn add_root(Json(hello): Json<Hello>) -> Json<Vec<Hello>> {
+async fn add_root(Path(_): Path<usize>, Json(hello): Json<Hello>) -> Json<Vec<Hello>> {
     vec![hello].into()
 }
 
 #[tokio::main]
 async fn main() {
-    let app: Api<()> = Api::new().route("/", extract!(get(fetch_root).post(add_root)));
+    let app: Api<()> = Api::new().route("/:p", extract!(get(fetch_root).post(add_root)));
 
-    app.api("tests/api.ts").unwrap();
+    app.generate_client("tests/api.ts").unwrap();
 
     let _listener = tokio::net::TcpListener::bind("127.0.0.1:8080")
         .await
