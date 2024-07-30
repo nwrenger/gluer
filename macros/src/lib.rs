@@ -1,144 +1,95 @@
 use proc_macro as pc;
 use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
-use std::fmt;
+use std::{collections::HashMap, fmt};
 use syn::{parenthesized, parse::Parse, spanned::Spanned};
 
 fn s_err(span: proc_macro2::Span, msg: impl fmt::Display) -> syn::Error {
     syn::Error::new(span, msg)
 }
 
-fn logic_err(span: proc_macro2::Span) -> syn::Error {
-    s_err(
-        span,
-        "Fatal logic error when trying to extract data from rust types",
-    )
-}
-
-/// Adds a route to the router. Use for each api endpoint you want to expose to the frontend.
-/// `Inline Functions` are currently not supported.
+/// Used to extract the metadata of functions and structs. Use inside the `Api::route` function.
 #[proc_macro]
-pub fn add_route(input: pc::TokenStream) -> pc::TokenStream {
-    match add_route_inner(input.into()) {
+pub fn extract(input: pc::TokenStream) -> pc::TokenStream {
+    match extract_inner(input.into()) {
         Ok(result) => result.into(),
-        Err(e) => e.into_compile_error().into(),
+        Err(e) => e.to_compile_error().into(),
     }
 }
 
-fn add_route_inner(input: TokenStream) -> syn::Result<TokenStream> {
-    let span = input.span();
-    let args = syn::parse2::<RouterArgs>(input)?;
+fn extract_inner(input: TokenStream) -> syn::Result<TokenStream> {
+    let ExtractArgs { routes } = syn::parse2::<ExtractArgs>(input.clone())?;
+    let original_input = input;
 
-    let routes_ident = args.routes_ident;
-    let app_ident = args.app_ident;
-    let route = args.route;
-    let handler = args.handler;
+    let routes = routes.iter().map(|Route { method, handler }| {
+        let method_name = method.to_string();
+        let handler_name = handler.to_string();
 
-    let mut routes = Vec::new();
+        let fn_info = syn::Ident::new(
+            &format!("FN_{}", handler_name.to_uppercase()),
+            proc_macro2::Span::call_site(),
+        );
 
-    for MethodCall { method, r#fn } in &handler {
-        let fn_name = r#fn
-            .segments
-            .last()
-            .ok_or_else(|| logic_err(span))?
-            .ident
-            .to_string();
+        quote! {
+            gluer::Route {
+                url: "",
+                method: #method_name,
+                fn_name: #handler_name,
+                fn_info: #fn_info,
+            }
+        }
+    });
 
-        routes.push(Route {
-            route: route.clone(),
-            method: method.to_string(),
-            fn_name,
-        });
-    }
-
-    Ok(quote! {
-        #app_ident = #app_ident.route(#route, #(#handler).*);
-        #routes_ident.extend_from_slice(&[#(#routes),*]);
-    })
+    Ok(quote! { ( #original_input, &[#(#routes,)*] )})
 }
 
-struct RouterArgs {
-    routes_ident: syn::Ident,
-    app_ident: syn::Ident,
-    route: String,
-    handler: Vec<MethodCall>,
+struct ExtractArgs {
+    routes: Vec<Route>,
 }
 
-impl Parse for RouterArgs {
+impl Parse for ExtractArgs {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let routes_ident = input.parse()?;
-        input.parse::<syn::Token![,]>()?;
-        let app_ident = input.parse()?;
-        input.parse::<syn::Token![,]>()?;
-        let route = input.parse::<syn::LitStr>()?.value();
-        input.parse::<syn::Token![,]>()?;
-        let handler = input.parse_terminated(MethodCall::parse, syn::Token![.])?;
-        let handler: Vec<MethodCall> = handler.into_iter().collect();
+        let mut routes = vec![];
 
-        Ok(RouterArgs {
-            routes_ident,
-            app_ident,
-            route,
-            handler,
-        })
-    }
-}
+        while !input.is_empty() {
+            let route = input.parse()?;
+            routes.push(route);
 
-struct MethodCall {
-    method: syn::Ident,
-    r#fn: syn::Path,
-}
+            if !input.is_empty() {
+                input.parse::<syn::Token!(.)>()?;
+            }
+        }
 
-impl Parse for MethodCall {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let method: syn::Ident = input.parse()?;
-        let content;
-        parenthesized!(content in input);
-        let r#fn: syn::Path = content.parse()?;
-
-        Ok(MethodCall { method, r#fn })
-    }
-}
-
-impl ToTokens for MethodCall {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        let method = &self.method;
-        let r#fn = &self.r#fn;
-
-        tokens.extend(quote! {
-            #method(#r#fn)
-        });
+        Ok(ExtractArgs { routes })
     }
 }
 
 struct Route {
-    route: String,
-    method: String,
-    fn_name: String,
+    method: syn::Ident,
+    handler: syn::Ident,
 }
 
-impl ToTokens for Route {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        let route = &self.route;
-        let method = &self.method;
-        let fn_name = &self.fn_name;
+impl Parse for Route {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let method = input.parse()?;
+        let content;
+        parenthesized!(content in input);
+        let handler = content.parse()?;
 
-        tokens.extend(quote! {
-            (#route, #method, #fn_name)
-        });
+        Ok(Route { method, handler })
     }
 }
 
 /// Put before structs or functions to be usable by the `glue` crate.
 #[proc_macro_attribute]
-pub fn cached(args: pc::TokenStream, input: pc::TokenStream) -> pc::TokenStream {
-    match cached_inner(args.into(), input.into()) {
+pub fn metadata(args: pc::TokenStream, input: pc::TokenStream) -> pc::TokenStream {
+    match metadata_inner(args.into(), input.into()) {
         Ok(result) => result.into(),
         Err(e) => e.into_compile_error().into(),
     }
 }
 
-fn cached_inner(args: TokenStream, input: TokenStream) -> syn::Result<TokenStream> {
+fn metadata_inner(args: TokenStream, input: TokenStream) -> syn::Result<TokenStream> {
     let span = input.span();
     let item = syn::parse2::<syn::Item>(input.clone())?;
     let _args = syn::parse2::<NoArgs>(args)?;
@@ -157,6 +108,7 @@ fn cached_inner(args: TokenStream, input: TokenStream) -> syn::Result<TokenStrea
 
 fn generate_struct_const(item_struct: syn::ItemStruct) -> syn::Result<TokenStream> {
     let struct_name = item_struct.ident.to_string();
+    let vis = &item_struct.vis;
     let fields = item_struct
         .fields
         .into_iter()
@@ -177,32 +129,54 @@ fn generate_struct_const(item_struct: syn::ItemStruct) -> syn::Result<TokenStrea
     );
 
     let const_value = fields.iter().map(|(ident, ty)| {
-        quote! { (#ident, #ty) }
+        quote! { gluer::Field { name: #ident, ty: #ty } }
     });
 
     Ok(quote! {
-        pub const #const_ident: (&str, &[(&str, &str)]) = (#struct_name, &[#(#const_value),*]);
+        #vis const #const_ident: gluer::StructInfo = gluer::StructInfo { name: #struct_name, fields: &[#(#const_value),*] };
     })
 }
 
 fn generate_fn_const(item_fn: syn::ItemFn) -> syn::Result<TokenStream> {
     let fn_name = item_fn.sig.ident.to_string();
+    let vis = &item_fn.vis;
+    let mut structs = HashMap::new();
+
     let params = item_fn
         .sig
         .inputs
         .iter()
-        .map(|param| match param {
+        .filter_map(|param| match param {
             syn::FnArg::Typed(syn::PatType { pat, ty, .. }) => {
                 let pat = pat.to_token_stream().to_string();
-                let ty = ty.to_token_stream().to_string();
-                Ok((pat, ty))
+                if let Some((is_basic, outer_ty, inner_ty)) = basic_rust_type(ty).ok()? {
+                    if !is_basic {
+                        let struct_const = format!("STRUCT_{}", inner_ty.to_uppercase());
+                        structs.insert(inner_ty.clone(), struct_const);
+                    }
+                    Some(Ok((pat, outer_ty)))
+                } else {
+                    None
+                }
             }
-            syn::FnArg::Receiver(_) => Err(s_err(param.span(), "Receiver parameter not allowed")),
+            syn::FnArg::Receiver(_) => {
+                Some(Err(s_err(param.span(), "Receiver parameter not allowed")))
+            }
         })
         .collect::<syn::Result<Vec<_>>>()?;
 
     let response = match &item_fn.sig.output {
-        syn::ReturnType::Type(_, ty) => ty.into_token_stream().to_string(),
+        syn::ReturnType::Type(_, ty) => {
+            if let Some((is_basic, outer_ty, inner_ty)) = basic_rust_type(ty)? {
+                if !is_basic {
+                    let struct_const = format!("STRUCT_{}", inner_ty.to_uppercase());
+                    structs.insert(inner_ty.clone(), struct_const);
+                }
+                outer_ty
+            } else {
+                return Err(s_err(ty.span(), "Unsupported return type"));
+            }
+        }
         syn::ReturnType::Default => "()".to_string(),
     };
 
@@ -212,11 +186,20 @@ fn generate_fn_const(item_fn: syn::ItemFn) -> syn::Result<TokenStream> {
     );
 
     let const_value = params.iter().map(|(pat, ty)| {
-        quote! { (#pat, #ty) }
+        quote! { gluer::Field { name: #pat, ty: #ty } }
+    });
+
+    let structs_quote = structs.iter().map(|(_ty_str, struct_name)| {
+        let struct_ident = syn::Ident::new(struct_name, proc_macro2::Span::call_site());
+        quote! { #struct_ident }
     });
 
     Ok(quote! {
-        pub const #const_ident: (&str, &[(&str, &str)], &str) = (#fn_name, &[#(#const_value),*], #response);
+        #vis const #const_ident: gluer::FnInfo = gluer::FnInfo {
+            params: &[#(#const_value),*],
+            response: #response,
+            structs: &[#(#structs_quote),*]
+        };
     })
 }
 
@@ -229,4 +212,77 @@ impl syn::parse::Parse for NoArgs {
         }
         Ok(NoArgs {})
     }
+}
+
+/// Returns a tuple (bool, outermost_type, innermost_type)
+fn basic_rust_type(ty: &syn::Type) -> syn::Result<Option<(bool, String, String)>> {
+    let ty_str = ty.to_token_stream().to_string();
+    match ty {
+        syn::Type::Path(syn::TypePath { path, .. }) => {
+            if let Some(segment) = path.segments.last() {
+                let ty_name = segment.ident.to_string();
+
+                // Skip types like State<...> and ...more in the future
+                if ty_name == "State" {
+                    return Ok(None);
+                }
+
+                match &segment.arguments {
+                    syn::PathArguments::None => {
+                        let is_basic = matches!(
+                            ty_name.as_str(),
+                            "bool"
+                                | "char"
+                                | "str"
+                                | "u8"
+                                | "u16"
+                                | "u32"
+                                | "u64"
+                                | "u128"
+                                | "i8"
+                                | "i16"
+                                | "i32"
+                                | "i64"
+                                | "i128"
+                                | "usize"
+                                | "isize"
+                                | "f32"
+                                | "f64"
+                                | "String"
+                                | "Json"
+                        );
+                        return Ok(Some((is_basic, ty_name.clone(), ty_name)));
+                    }
+                    syn::PathArguments::AngleBracketed(ref args) => {
+                        let mut outer_type = ty_name.clone();
+                        let mut innermost_type = String::new();
+                        let mut is_basic = false;
+
+                        for arg in &args.args {
+                            if let syn::GenericArgument::Type(ref inner_ty) = arg {
+                                if let Ok(Some((inner_is_basic, outer_most, inner_innermost))) =
+                                    basic_rust_type(inner_ty)
+                                {
+                                    outer_type = format!("{}<{}>", ty_name, outer_most);
+                                    innermost_type = inner_innermost;
+                                    is_basic = inner_is_basic;
+                                } else {
+                                    return Ok(None);
+                                }
+                            }
+                        }
+
+                        return Ok(Some((is_basic, outer_type, innermost_type)));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        syn::Type::Reference(syn::TypeReference { elem, .. }) => return basic_rust_type(&elem),
+        _ => {}
+    }
+    Err(s_err(
+        proc_macro2::Span::call_site(),
+        format!("Failed to parse type {}", ty_str),
+    ))
 }

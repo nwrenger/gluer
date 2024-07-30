@@ -1,44 +1,31 @@
-use axum::{routing::get, Json, Router};
-use gluer::{add_route, cached, gen_ts};
-use hello::{Hello, STRUCT_HELLO};
+use axum::{routing::get, Json};
+use gluer::{extract, metadata, Api};
 
-#[cached]
-async fn fetch_root() -> String {
-    String::from("Hello, World!")
+#[metadata]
+async fn fetch_root() -> &'static str {
+    "Hello, World!"
 }
 
-mod hello {
-    use gluer::cached;
-
-    #[cached]
-    #[derive(serde::Serialize, serde::Deserialize, Default)]
-    pub struct Hello {
-        name: String,
-    }
+#[metadata]
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+pub struct Hello {
+    name: String,
 }
 
-#[cached]
-async fn add_root(Json(hello): Json<Hello>) -> Json<Hello> {
-    hello.into()
+#[metadata]
+async fn add_root(Json(hello): Json<Hello>) -> Json<Vec<Hello>> {
+    vec![hello].into()
 }
 
 #[tokio::test]
 async fn main_test() {
-    let mut _app: Router<()> = Router::new();
-    let mut routes = vec![];
+    let app: Api<()> = Api::new().route("/", extract!(get(fetch_root).post(add_root)));
 
-    add_route!(routes, _app, "/", get(fetch_root).post(add_root));
-
-    gen_ts(
-        "tests/api.ts",
-        routes,
-        &[FN_FETCH_ROOT, FN_ADD_ROOT],
-        &[STRUCT_HELLO],
-    )
-    .unwrap();
+    app.api("tests/api.ts").unwrap();
 
     let _listener = tokio::net::TcpListener::bind("127.0.0.1:8080")
         .await
         .unwrap();
-    // axum::serve(listener, app).await.unwrap(); // prevent everlasting server
+    // starts the server, comment in and rename `_listener` to run it
+    // axum::serve(listener, app.into_router()).await.unwrap();
 }

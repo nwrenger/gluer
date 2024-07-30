@@ -1,71 +1,189 @@
-pub use gluer_macros::{add_route, cached};
+#![doc = include_str!("../README.md")]
 
-use std::collections::BTreeMap;
-use std::fs::File;
-use std::io::Write;
-use std::path::Path;
+pub use gluer_macros::{extract, metadata};
 
-/// Generates an api ts file at the `path` from the `routes` generated via `add_route!`, `fns` generated via `#[cached]` and `structs` generated via `#[cached]`.
-/// ```rust,no_run
-/// use gluer::{add_route, cached, gen_ts};
-/// use axum::{routing::get, Router};
-/// 
-/// #[cached]
-/// async fn test() {}
-/// 
-/// let mut app: Router<()> = Router::new();
-/// let mut routes = vec![];
-/// 
-/// add_route!(routes, app, "/", get(test));
-/// 
-/// gen_ts(
-///     "tests/api.ts",
-///     routes,
-///     &[FN_TEST],
-///     &[],
-/// )
-/// .unwrap();
-/// ```
-pub fn gen_ts<P: AsRef<Path>>(
-    path: P,
-    routes: Vec<(&str, &str, &str)>,       // (url, method, fn_name)
-    fns: &[(&str, &[(&str, &str)], &str)], // (fn_name, params, response)
-    structs: &[(&str, &[(&str, &str)])],   // (struct_name, fields)
-) -> Result<(), String> {
-    let mut ts_functions = BTreeMap::new();
-    let mut ts_interfaces = BTreeMap::new();
+use axum::routing::MethodRouter;
+use axum::Router;
+use std::{collections::BTreeMap, fs::File, io::Write, path::Path};
 
-    for (url, method, fn_name) in routes {
-        let function = fns
-            .iter()
-            .find(|&&(name, _, _)| fn_name == name)
-            .ok_or_else(|| {
-                format!(
-                    "Function '{}' not found in the provided functions list",
-                    fn_name
-                )
-            })?;
+/// Wrapper around `axum::Router` that allows for generating TypeScript API clients.
+pub struct Api<'a, S = ()> {
+    router: Router<S>,
+    api_routes: Vec<Route<'a>>,
+}
 
-        println!("function: {:?}", function);
+impl<'a, S> Api<'a, S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    /// Create a new `Api`.
+    pub fn new() -> Self {
+        Self {
+            router: Router::new(),
+            api_routes: vec![],
+        }
+    }
 
-        let (fn_name, params, response) = function;
-        let params_type = collect_params(params, &mut ts_interfaces, structs)?;
-        let response_type = collect_response(response, &mut ts_interfaces, structs)?;
+    /// Add a route to the API and `axum::Router`.
+    pub fn route(
+        mut self,
+        path: &'a str,
+        extracted_metadata: (MethodRouter<S>, &'a [Route<'a>]),
+    ) -> Self {
+        let router = self.router.route(path, extracted_metadata.0);
+        self.api_routes.extend({
+            let mut routes = vec![];
+            for route in extracted_metadata.1 {
+                routes.push(Route {
+                    url: path,
+                    method: route.method,
+                    fn_name: route.fn_name,
+                    fn_info: route.fn_info,
+                });
+            }
+            routes
+        });
 
-        let params_str = if !params_type.is_empty() {
-            format!("params: {}", params_type)
-        } else {
-            String::new()
-        };
+        Self {
+            router,
+            api_routes: self.api_routes,
+        }
+    }
 
-        let body_assignment = if !params_type.is_empty() {
-            "JSON.stringify(params)"
-        } else {
-            "undefined"
-        };
+    /// Access the inner `axum::Router` via a Function `f`.
+    pub fn inner_router<F, S2>(self, f: F) -> Api<'a, S2>
+    where
+        F: Fn(Router<S>) -> Router<S2>,
+    {
+        Api {
+            router: f(self.router),
+            api_routes: self.api_routes,
+        }
+    }
 
-        let function_str = format!(
-            r#"export async function {fn_name}({params_str}): Promise<{response_type} | any> {{
+    /// Generate frontend TypeScript API client from the API routes.
+    pub fn api<P: AsRef<Path>>(&self, path: P) -> Result<(), String> {
+        let mut ts_functions = BTreeMap::new();
+        let mut ts_interfaces = BTreeMap::new();
+
+        for route in &self.api_routes {
+            if !route.fn_info.structs.is_empty() {
+                for struct_info in route.fn_info.structs {
+                    ts_interfaces
+                        .entry(struct_info.name.to_string())
+                        .or_insert_with(|| {
+                            generate_ts_interface(struct_info.name, struct_info.fields)
+                        });
+                }
+            }
+
+            let params_type = route
+                .fn_info
+                .params
+                .iter()
+                .map(|Field { name: _, ty }| ty_to_ts(ty, &ts_interfaces).unwrap())
+                .collect::<Vec<_>>();
+            let response_type = ty_to_ts(route.fn_info.response, &ts_interfaces).unwrap();
+
+            if ts_functions.contains_key(route.fn_name) {
+                return Err(format!(
+                    "Function with name '{}' already exists",
+                    route.fn_name,
+                ));
+            } else {
+                ts_functions.insert(
+                    route.fn_name.to_string(),
+                    generate_ts_function(
+                        route.url,
+                        route.method,
+                        route.fn_name,
+                        params_type,
+                        &response_type,
+                    ),
+                );
+            }
+        }
+
+        write_to_file(path, ts_interfaces, ts_functions)?;
+
+        Ok(())
+    }
+
+    /// Convert into an `axum::Router`.
+    pub fn into_router(self) -> Router<S> {
+        self.router
+    }
+}
+
+impl<'a, S> Default for Api<'a, S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Route information.
+pub struct Route<'a> {
+    pub url: &'a str,
+    pub method: &'a str,
+    pub fn_name: &'a str,
+    pub fn_info: FnInfo<'a>,
+}
+
+/// Function information.
+#[derive(Clone, Copy)]
+pub struct FnInfo<'a> {
+    pub params: &'a [Field<'a>],
+    pub response: &'a str,
+    pub structs: &'a [StructInfo<'a>],
+}
+
+/// Struct information.
+pub struct StructInfo<'a> {
+    pub name: &'a str,
+    pub fields: &'a [Field<'a>],
+}
+
+/// Field information.
+pub struct Field<'a> {
+    pub name: &'a str,
+    pub ty: &'a str,
+}
+
+fn generate_ts_interface(struct_name: &str, fields: &[Field]) -> String {
+    let mut interface = format!("export interface {} {{\n", struct_name);
+    for Field { name, ty } in fields {
+        let bind = BTreeMap::new();
+        let ty = ty_to_ts(ty, &bind).unwrap();
+        interface.push_str(&format!("    {}: {};\n", name, ty));
+    }
+    interface.push_str("}\n\n");
+    interface
+}
+
+fn generate_ts_function(
+    url: &str,
+    method: &str,
+    fn_name: &str,
+    params_type: Vec<String>,
+    response_type: &str,
+) -> String {
+    let params_str = if !params_type.is_empty() {
+        format!("data: {}", params_type.join(", "))
+    } else {
+        String::new()
+    };
+
+    let body_assignment = if !params_type.is_empty() {
+        "JSON.stringify(data)"
+    } else {
+        "undefined"
+    };
+
+    format!(
+        r#"export async function {fn_name}({params_str}): Promise<{response_type}> {{
     const response = await fetch("{url}", {{
         method: "{method}",
         headers: {{
@@ -77,87 +195,35 @@ pub fn gen_ts<P: AsRef<Path>>(
 }}
 
 "#,
-            fn_name = fn_name,
-            params_str = params_str,
-            response_type = response_type,
-            url = url,
-            method = method.to_uppercase(),
-            body_assignment = body_assignment
-        );
-
-        ts_functions.insert(fn_name.to_string(), function_str);
-    }
-
-    write_to_file(path, ts_interfaces, ts_functions)?;
-
-    Ok(())
+        fn_name = fn_name,
+        params_str = params_str,
+        response_type = response_type,
+        url = url,
+        method = method.to_uppercase(),
+        body_assignment = body_assignment
+    )
 }
 
-fn collect_params(
-    params: &[(&str, &str)],
-    ts_interfaces: &mut BTreeMap<String, String>,
-    structs: &[(&str, &[(&str, &str)])],
+fn ty_to_ts<'a>(
+    ty: &'a str,
+    ts_interfaces: &'a BTreeMap<String, String>,
 ) -> Result<String, String> {
-    for &(_, param_type) in params {
-        if param_type.contains("Json") {
-            let struct_name = extract_struct_name(param_type)?;
-            if let Some(fields) = structs
-                .iter()
-                .find(|&&(s_name, _)| s_name == struct_name)
-                .map(|(_, fields)| fields)
-            {
-                ts_interfaces
-                    .entry(struct_name.to_string())
-                    .or_insert_with(|| generate_ts_interface(&struct_name, fields));
-                return Ok(struct_name);
-            } else {
-                return Err(format!(
-                    "Struct '{}' not found in the provided structs list",
-                    struct_name
-                ));
-            }
+    if ts_interfaces.contains_key(ty) {
+        return Ok(ty.to_owned());
+    }
+    Ok(match ty {
+        "str" | "String" => String::from("string"),
+        "usize" | "isize" | "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" | "f32"
+        | "f64" => String::from("number"),
+        "bool" => String::from("boolean"),
+        "()" => String::from("void"),
+        t if t.starts_with("Vec<") => {
+            let ty = ty_to_ts(&t[4..t.len() - 1], ts_interfaces)?.to_string();
+            format!("{}[]", ty)
         }
-    }
-    Ok(String::new())
-}
-
-fn collect_response(
-    response: &str,
-    ts_interfaces: &mut BTreeMap<String, String>,
-    structs: &[(&str, &[(&str, &str)])],
-) -> Result<String, String> {
-    let response = response.replace(' ', "");
-    if let Some(response_type) = convert_rust_type_to_ts(&response) {
-        return Ok(response_type);
-    }
-
-    if response.contains("Json") {
-        let struct_name = extract_struct_name(&response)?;
-        if let Some(fields) = structs
-            .iter()
-            .find(|&&(s_name, _)| s_name == struct_name)
-            .map(|(_, fields)| fields)
-        {
-            ts_interfaces
-                .entry(struct_name.to_string())
-                .or_insert_with(|| generate_ts_interface(&struct_name, fields));
-            return Ok(struct_name);
-        }
-    }
-
-    Err(format!(
-        "Struct '{}' not found in the provided structs list",
-        response
-    ))
-}
-
-fn extract_struct_name(type_str: &str) -> Result<String, String> {
-    type_str
-        .split('<')
-        .nth(1)
-        .and_then(|s| s.split('>').next())
-        .map(|s| s.split("::").last().unwrap_or("").trim().to_string())
-        .ok_or_else(|| format!("Failed to extract struct name from '{}'", type_str))
+        t if t.starts_with("Json<") => return ty_to_ts(&t[5..t.len() - 1], ts_interfaces),
+        _ => return Err(format!("Type '{}' couldn't be converted to TypeScript", ty)),
+    })
 }
 
 fn write_to_file<P: AsRef<Path>>(
@@ -178,35 +244,4 @@ fn write_to_file<P: AsRef<Path>>(
     }
 
     Ok(())
-}
-
-fn convert_rust_type_to_ts(rust_type: &str) -> Option<String> {
-    let rust_type = rust_type.trim();
-    Some(match rust_type {
-        "str" | "String" => "string".to_string(),
-        "usize" | "isize" | "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" | "f32"
-        | "f64" => "number".to_string(),
-        "bool" => "boolean".to_string(),
-        "()" => "void".to_string(),
-        t if t.starts_with("Vec<") => format!(
-            "{}[]",
-            convert_rust_type_to_ts(&t[4..t.len() - 1]).unwrap_or_default()
-        ),
-        t if t.starts_with("Option<") => return convert_rust_type_to_ts(&t[7..t.len() - 1]),
-        t if t.starts_with("Result<") => return convert_rust_type_to_ts(&t[7..t.len() - 1]),
-        t if t.starts_with("Json<") => return convert_rust_type_to_ts(&t[5..t.len() - 1]),
-        t if t.starts_with('&') => return convert_rust_type_to_ts(&t[1..]),
-        t if t.starts_with("'static") => return convert_rust_type_to_ts(&t[8..]),
-        _ => return None,
-    })
-}
-
-fn generate_ts_interface(struct_name: &str, fields: &[(&str, &str)]) -> String {
-    let mut interface = format!("export interface {} {{\n", struct_name);
-    for &(ident, ty) in fields {
-        let ty = convert_rust_type_to_ts(ty).unwrap_or_default();
-        interface.push_str(&format!("    {}: {};\n", ident, ty));
-    }
-    interface.push_str("}\n\n");
-    interface
 }

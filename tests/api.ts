@@ -2,18 +2,18 @@ export interface Hello {
     name: string;
 }
 
-export async function add_root(params: Hello): Promise<Hello | any> {
+export async function add_root(data: Hello): Promise<Hello[]> {
     const response = await fetch("/", {
         method: "POST",
         headers: {
             "Content-Type": "application/json"
         },
-        body: JSON.stringify(params)
+        body: JSON.stringify(data)
     });
     return response.json();
 }
 
-export async function fetch_root(): Promise<string | any> {
+export async function fetch_root(): Promise<string> {
     const response = await fetch("/", {
         method: "GET",
         headers: {
