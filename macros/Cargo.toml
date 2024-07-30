@@ -8,7 +8,6 @@ keywords = ["parser", "api", "macro"]
 categories = ["accessibility", "web-programming", "api-bindings"]
 rust-version = "1.64.0"
 repository = "https://github.com/nwrenger/gluer"
-readme = "README.md"
 license = "MIT"
 
 [lib]
