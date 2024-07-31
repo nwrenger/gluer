@@ -72,26 +72,17 @@ where
             if !route.fn_info.structs.is_empty() {
                 for struct_info in route.fn_info.structs {
                     Self::deps(struct_info.dependencies, &mut ts_interfaces);
-                    let ts_interfaces_clone = ts_interfaces.clone();
-                    ts_interfaces
-                        .entry(struct_info.name.to_string())
-                        .or_insert_with(|| {
-                            generate_ts_interface(
-                                struct_info.name,
-                                struct_info.fields,
-                                &ts_interfaces_clone,
-                            )
-                        });
                 }
+                Self::deps(route.fn_info.structs, &mut ts_interfaces);
             }
 
             let params_type = route
                 .fn_info
                 .params
                 .iter()
-                .map(|Field { name: _, ty }| ty_to_ts(ty, &ts_interfaces).unwrap())
+                .map(|Field { name: _, ty }| ty_to_ts(ty, &[], &ts_interfaces).unwrap())
                 .collect::<Vec<_>>();
-            let response_type = ty_to_ts(route.fn_info.response, &ts_interfaces).unwrap();
+            let response_type = ty_to_ts(route.fn_info.response, &[], &ts_interfaces).unwrap();
 
             if ts_functions.contains_key(route.fn_name) {
                 return Err(format!(
@@ -120,17 +111,19 @@ where
     fn deps(dependencies: &[StructInfo], ts_interfaces: &mut BTreeMap<String, String>) {
         for StructInfo {
             name,
+            generics,
             fields,
             dependencies,
         } in dependencies
         {
-            if !dependencies.is_empty() {
-                Self::deps(dependencies, ts_interfaces);
+            if !ts_interfaces.contains_key(&name.to_string()) {
+                let ts_interfaces_clone = ts_interfaces.clone();
+                ts_interfaces.insert(
+                    name.to_string(),
+                    generate_ts_interface(name, generics, fields, &ts_interfaces_clone),
+                );
             }
-            let ts_interfaces_clone = ts_interfaces.clone();
-            ts_interfaces
-                .entry(name.to_string())
-                .or_insert_with(move || generate_ts_interface(name, fields, &ts_interfaces_clone));
+            Self::deps(dependencies, ts_interfaces);
         }
     }
 
@@ -170,6 +163,7 @@ pub struct FnInfo<'a> {
 #[derive(Clone, Debug)]
 pub struct StructInfo<'a> {
     pub name: &'a str,
+    pub generics: &'a [&'a str],
     pub fields: &'a [Field<'a>],
     pub dependencies: &'a [StructInfo<'a>],
 }
@@ -183,12 +177,18 @@ pub struct Field<'a> {
 
 fn generate_ts_interface(
     struct_name: &str,
+    generics: &[&str],
     fields: &[Field],
     ts_interfaces: &BTreeMap<String, String>,
 ) -> String {
-    let mut interface = format!("export interface {} {{\n", struct_name);
-    for Field { name, ty } in dbg!(fields) {
-        let ty = ty_to_ts(ty, ts_interfaces).unwrap();
+    let generics_str = if generics.is_empty() {
+        "".to_string()
+    } else {
+        format!("<{}>", generics.join(", "))
+    };
+    let mut interface = format!("export interface {}{} {{\n", struct_name, generics_str);
+    for Field { name, ty } in fields {
+        let ty = ty_to_ts(ty, generics, ts_interfaces).unwrap();
         interface.push_str(&format!("    {}: {};\n", name, ty.unwrap()));
     }
     interface.push_str("}\n\n");
@@ -257,7 +257,7 @@ fn generate_ts_function(
     )
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Debug)]
 enum Type<T> {
     Unknown(T),
     Json(T),
@@ -280,12 +280,14 @@ impl<T> Type<T> {
 
 fn ty_to_ts<'a>(
     ty: &'a str,
+    generics: &[&str],
     ts_interfaces: &'a BTreeMap<String, String>,
 ) -> Result<Type<String>, String> {
     let ty = ty.trim().replace(" ", "");
     if ts_interfaces.contains_key(ty.as_str()) {
         return Ok(Unknown(ty.to_string()));
     }
+
     Ok(match ty.as_str() {
         "str" | "String" => Unknown(String::from("string")),
         "usize" | "isize" | "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" | "f32"
@@ -293,40 +295,70 @@ fn ty_to_ts<'a>(
         "bool" => Unknown(String::from("boolean")),
         "()" => Unknown(String::from("void")),
         t if t.starts_with("Vec<") => {
-            let ty = ty_to_ts(&t[4..t.len() - 1], ts_interfaces)?.unwrap();
+            let inner_ty = &t[4..t.len() - 1];
+            let ty = ty_to_ts(inner_ty, generics, ts_interfaces)?.unwrap();
             Unknown(format!("{}[]", ty))
         }
         t if t.starts_with("Html<") => {
-            let ty = ty_to_ts(&t[5..t.len() - 1], ts_interfaces)?.unwrap();
+            let inner_ty = &t[5..t.len() - 1];
+            let ty = ty_to_ts(inner_ty, generics, ts_interfaces)?.unwrap();
             Unknown(ty)
         }
         t if t.starts_with("Json<") => {
-            let ty = ty_to_ts(&t[5..t.len() - 1], ts_interfaces)?.unwrap();
+            let inner_ty = &t[5..t.len() - 1];
+            let ty = ty_to_ts(inner_ty, generics, ts_interfaces)?.unwrap();
             Json(ty)
         }
         t if t.starts_with("Path<") => {
-            let ty = ty_to_ts(&t[5..t.len() - 1], ts_interfaces)?.unwrap();
+            let inner_ty = &t[5..t.len() - 1];
+            let ty = ty_to_ts(inner_ty, generics, ts_interfaces)?.unwrap();
             Path(ty)
         }
         t if t.starts_with("Query<HashMap<") => {
-            let ty = ty_to_ts(&t[14..t.len() - 2], ts_interfaces)?.unwrap();
+            let inner_ty = &t[14..t.len() - 2];
+            let ty = ty_to_ts(inner_ty, generics, ts_interfaces)?.unwrap();
             QueryMap(ty)
         }
         t if t.starts_with("Query<") => {
-            let ty = ty_to_ts(&t[6..t.len() - 1], ts_interfaces)?.unwrap();
+            let inner_ty = &t[6..t.len() - 1];
+            let ty = ty_to_ts(inner_ty, generics, ts_interfaces)?.unwrap();
             Query(ty)
         }
         t if t.starts_with("Result<") => {
-            let ty: String = ty_to_ts(&t[7..t.len() - 1], ts_interfaces)?.unwrap();
+            let inner_ty = &t[7..t.len() - 1];
+            let ty = ty_to_ts(inner_ty, generics, ts_interfaces)?.unwrap();
             Unknown(format!("{} | any", ty))
         }
         t if t.starts_with("Option<") => {
-            let ty: String = ty_to_ts(&t[7..t.len() - 1], ts_interfaces)?.unwrap();
+            let inner_ty = &t[7..t.len() - 1];
+            let ty = ty_to_ts(inner_ty, generics, ts_interfaces)?.unwrap();
             Unknown(format!("{} | null", ty))
         }
-        t if t.starts_with("&") => ty_to_ts(&t[1..t.len()], ts_interfaces)?,
-        t if t.starts_with("'static") => ty_to_ts(&t[7..t.len()], ts_interfaces)?,
-        _ => return Err(format!("Type '{}' couldn't be converted to TypeScript", ty)),
+        t if t.starts_with("&") => ty_to_ts(&t[1..t.len()], generics, ts_interfaces)?,
+        t if t.starts_with("'static") => ty_to_ts(&t[7..t.len()], generics, ts_interfaces)?,
+        t if t.contains('<') && t.contains('>') => {
+            let split: Vec<&str> = t.split('<').collect();
+            let base_ty = split[0];
+            let generic_params = &split[1][..split[1].len() - 1];
+
+            let generic_ts = generic_params
+                .split(',')
+                .map(|param| ty_to_ts(param, generics, ts_interfaces))
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .map(|t| t.unwrap())
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            Unknown(format!("{}<{}>", base_ty, generic_ts))
+        }
+        t => {
+            if let Some(t) = generics.iter().find(|p| **p == t) {
+                Unknown(t.to_string())
+            } else {
+                return Err(format!("Type '{}' couldn't be converted to TypeScript", ty));
+            }
+        }
     })
 }
 

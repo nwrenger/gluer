@@ -1,8 +1,8 @@
-use proc_macro as pc;
+use proc_macro::{self as pc};
 use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
-use std::{collections::HashMap, fmt};
-use syn::{parenthesized, parse::Parse, spanned::Spanned};
+use std::{collections::HashMap, fmt, vec};
+use syn::{parenthesized, parse::Parse, spanned::Spanned, TypeParam};
 
 fn s_err(span: proc_macro2::Span, msg: impl fmt::Display) -> syn::Error {
     syn::Error::new(span, msg)
@@ -111,6 +111,18 @@ fn generate_struct_const(
 ) -> syn::Result<(TokenStream, TokenStream)> {
     let struct_name = item_struct.ident.to_string();
     let vis = &item_struct.vis;
+    let generics: Vec<String> = item_struct
+        .generics
+        .params
+        .iter()
+        .filter_map(|generic| {
+            if let syn::GenericParam::Type(TypeParam { ident, .. }) = generic {
+                return Some(ident.to_string());
+            }
+            None
+        })
+        .collect();
+
     let mut dependencies = HashMap::new();
 
     let fields = item_struct
@@ -120,16 +132,16 @@ fn generate_struct_const(
             let ident = field
                 .ident
                 .clone()
-                .ok_or_else(|| s_err(field.span(), "Unnamed field not supported"))?
+                .ok_or_else(|| syn::Error::new(field.span(), "Unnamed field not supported"))?
                 .to_string();
 
             let conversion_fn = parse_field_attr(&field.attrs)?;
 
-            // clean off all "info" attributes
+            // clean off all "into" attributes
             field.attrs = field
                 .attrs
                 .iter()
-                .filter(|attr| attr.path().is_ident("info"))
+                .filter(|attr| !attr.path().is_ident("into"))
                 .cloned()
                 .collect();
 
@@ -140,7 +152,10 @@ fn generate_struct_const(
             };
 
             if conversion_fn.is_none() {
-                if let Some((is_basic, _, inner_ty)) = basic_rust_type(&field.ty)? {
+                if let Some(RustType {
+                    is_basic, inner_ty, ..
+                }) = basic_rust_type(&field.ty, &generics)?
+                {
                     if !is_basic {
                         dependencies.insert(
                             inner_ty.clone(),
@@ -170,11 +185,20 @@ fn generate_struct_const(
         quote! { #struct_const }
     });
 
+    let generics_quote = generics.iter().map(|generic| {
+        quote! { #generic }
+    });
+
     let item_struct = quote! { #item_struct };
 
     Ok((
         quote! {
-            #vis const #const_ident: gluer::StructInfo = gluer::StructInfo { name: #struct_name, fields: &[#(#const_value),*], dependencies: &[#(#dependencies_quote),*] };
+            #vis const #const_ident: gluer::StructInfo = gluer::StructInfo {
+                name: #struct_name,
+                generics: &[#(#generics_quote),*],
+                fields: &[#(#const_value),*],
+                dependencies: &[#(#dependencies_quote),*]
+            };
         },
         item_struct,
     ))
@@ -200,7 +224,7 @@ fn parse_field_attr(attrs: &[syn::Attribute]) -> syn::Result<Option<syn::Type>> 
             }
         }
 
-        let message = "expected #[into = \"...\"]";
+        let message = "expected #[into(...)]";
         return Err(syn::Error::new_spanned(attr, message));
     }
     Ok(None)
@@ -212,6 +236,7 @@ fn generate_fn_const(
     let fn_name = item_fn.sig.ident.to_string();
     let vis = &item_fn.vis;
     let mut structs = HashMap::new();
+    let generics: Vec<String> = vec![];
 
     let params = item_fn
         .sig
@@ -220,10 +245,23 @@ fn generate_fn_const(
         .filter_map(|param| match param {
             syn::FnArg::Typed(syn::PatType { pat, ty, .. }) => {
                 let pat = pat.to_token_stream().to_string();
-                if let Some((is_basic, outer_ty, inner_ty)) = basic_rust_type(ty).ok()? {
+                if let Some(RustType {
+                    is_basic,
+                    outer_ty,
+                    inner_ty,
+                    is_generic: (is_generic, is_basic_generic),
+                }) = basic_rust_type(ty, &generics).ok()?
+                {
                     if !is_basic {
                         let struct_const = format!("STRUCT_{}", inner_ty.to_uppercase());
                         structs.insert(inner_ty.clone(), struct_const);
+                    }
+                    if is_generic && !is_basic_generic {
+                        let ty = outer_ty.clone();
+                        let ty = ty.split("<").last().unwrap();
+                        let ty = ty.replace('>', "").replace(" ", "");
+                        let struct_const = format!("STRUCT_{}", ty.to_uppercase());
+                        structs.insert(ty.clone(), struct_const);
                     }
                     Some(Ok((pat, outer_ty)))
                 } else {
@@ -238,10 +276,23 @@ fn generate_fn_const(
 
     let response = match &item_fn.sig.output {
         syn::ReturnType::Type(_, ty) => {
-            if let Some((is_basic, outer_ty, inner_ty)) = basic_rust_type(ty)? {
+            if let Some(RustType {
+                is_basic,
+                outer_ty,
+                inner_ty,
+                is_generic: (is_generic, is_basic_generic),
+            }) = basic_rust_type(ty, &generics)?
+            {
                 if !is_basic {
                     let struct_const = format!("STRUCT_{}", inner_ty.to_uppercase());
                     structs.insert(inner_ty.clone(), struct_const);
+                }
+                if is_generic && !is_basic_generic {
+                    let ty = outer_ty.clone();
+                    let ty = ty.split("<").last().unwrap();
+                    let ty = ty.replace('>', "").replace(" ", "");
+                    let struct_const = format!("STRUCT_{}", ty.to_uppercase());
+                    structs.insert(ty.clone(), struct_const);
                 }
                 outer_ty
             } else {
@@ -290,13 +341,40 @@ impl syn::parse::Parse for NoArgs {
     }
 }
 
-/// Returns a tuple (bool, outermost_type, innermost_type)
-fn basic_rust_type(ty: &syn::Type) -> syn::Result<Option<(bool, String, String)>> {
+struct RustType {
+    is_basic: bool,
+    outer_ty: String,
+    inner_ty: String,
+    is_generic: (bool, bool),
+}
+
+impl RustType {
+    fn new(is_basic: bool, outer_ty: String, inner_ty: String, is_generic: (bool, bool)) -> Self {
+        RustType {
+            is_basic,
+            outer_ty,
+            inner_ty,
+            is_generic,
+        }
+    }
+}
+
+/// Returns a tuple (bool, outermost_type, innermost_type, (is_generic, is_basic_generic))
+fn basic_rust_type(ty: &syn::Type, generics: &Vec<String>) -> syn::Result<Option<RustType>> {
     let ty_str = ty.to_token_stream().to_string();
     match ty {
         syn::Type::Path(syn::TypePath { path, .. }) => {
             if let Some(segment) = path.segments.last() {
                 let ty_name = segment.ident.to_string();
+
+                if generics.contains(&ty_name) {
+                    return Ok(Some(RustType::new(
+                        true,
+                        ty_name.clone(),
+                        ty_name,
+                        (true, true),
+                    )));
+                }
 
                 // Skip types like State<...> and more, see the `extract` section in axum's docs
                 if matches!(
@@ -329,28 +407,44 @@ fn basic_rust_type(ty: &syn::Type) -> syn::Result<Option<(bool, String, String)>
                                 | "f64"
                                 | "String"
                         );
-                        return Ok(Some((is_basic, ty_name.clone(), ty_name)));
+                        return Ok(Some(RustType::new(
+                            is_basic,
+                            ty_name.clone(),
+                            ty_name,
+                            (false, false),
+                        )));
                     }
                     syn::PathArguments::AngleBracketed(ref args) => {
-                        let mut outer_type = ty_name.clone();
-                        let mut innermost_type = String::new();
-                        let mut is_basic = false;
-
-                        for arg in &args.args {
-                            if let syn::GenericArgument::Type(ref inner_ty) = arg {
-                                if let Ok(Some((inner_is_basic, outer_most, inner_innermost))) =
-                                    basic_rust_type(inner_ty)
-                                {
-                                    outer_type = format!("{}<{}>", ty_name, outer_most);
-                                    innermost_type = inner_innermost;
-                                    is_basic = inner_is_basic;
-                                } else {
-                                    return Ok(None);
+                        if matches!(
+                            ty_name.as_str(),
+                            "Query" | "HashMap" | "Path" | "Vec" | "Json" | "Option" | "Result"
+                        ) {
+                            for arg in &args.args {
+                                if let syn::GenericArgument::Type(ref inner_ty) = arg {
+                                    if let Ok(Some(RustType {
+                                        is_basic,
+                                        outer_ty,
+                                        inner_ty,
+                                        is_generic,
+                                    })) = basic_rust_type(inner_ty, generics)
+                                    {
+                                        return Ok(Some(RustType::new(
+                                            is_basic,
+                                            format!("{}<{}>", ty_name, outer_ty),
+                                            inner_ty,
+                                            is_generic,
+                                        )));
+                                    }
                                 }
                             }
                         }
 
-                        return Ok(Some((is_basic, outer_type, innermost_type)));
+                        let mut outer_ty = ty_name.clone();
+                        if let Some(generic_type) = args.args.get(0) {
+                            outer_ty = format!("{}<{}>", outer_ty, generic_type.to_token_stream());
+                        }
+
+                        return Ok(Some(RustType::new(false, outer_ty, ty_name, (true, false))));
                     }
                     _ => {}
                 }
@@ -358,19 +452,32 @@ fn basic_rust_type(ty: &syn::Type) -> syn::Result<Option<(bool, String, String)>
         }
         syn::Type::Reference(syn::TypeReference { elem, .. })
         | syn::Type::Paren(syn::TypeParen { elem, .. })
-        | syn::Type::Group(syn::TypeGroup { elem, .. }) => return basic_rust_type(elem),
+        | syn::Type::Group(syn::TypeGroup { elem, .. }) => return basic_rust_type(elem, generics),
         syn::Type::Tuple(elems) => {
             if elems.elems.len() == 1 {
-                return basic_rust_type(&elems.elems[0]);
+                return basic_rust_type(&elems.elems[0], generics);
             } else if elems.elems.is_empty() {
-                return Ok(Some((true, "()".to_string(), "()".to_string())));
+                return Ok(Some(RustType::new(
+                    true,
+                    "()".to_string(),
+                    "()".to_string(),
+                    (false, false),
+                )));
             }
         }
         syn::Type::Array(syn::TypeArray { elem, .. })
         | syn::Type::Slice(syn::TypeSlice { elem, .. }) => {
-            if let Some((is_basic, outer_ty, inner_ty)) = basic_rust_type(elem)? {
+            if let Some(RustType {
+                is_basic,
+                outer_ty,
+                inner_ty,
+                is_generic,
+            }) = basic_rust_type(elem, generics)?
+            {
                 let vec_type = format!("Vec<{}>", outer_ty);
-                return Ok(Some((is_basic, vec_type, inner_ty)));
+                return Ok(Some(RustType::new(
+                    is_basic, vec_type, inner_ty, is_generic,
+                )));
             } else {
                 return Ok(None);
             }

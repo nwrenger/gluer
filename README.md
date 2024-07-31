@@ -50,7 +50,16 @@ use gluer::metadata;
 #[metadata]
 #[derive(Default, serde::Serialize)]
 struct Book {
-    // imagine some fields here
+    name: String,
+    // Sometimes you don't have access to certain data types, so you can override them using `#[into(Type)]`
+    #[into(String)]
+    user: User,
+}
+
+#[derive(Default, serde::Serialize)]
+struct User {
+    name: String,
+    password: String,
 }
 
 // Define the functions with the metadata macro
@@ -135,6 +144,7 @@ use axum::{
     Json,
 };
 use gluer::{extract, metadata, Api};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 #[metadata]
@@ -142,15 +152,29 @@ async fn fetch_root(Query(test): Query<HashMap<String, String>>, Path(p): Path<u
     test.get(&p.to_string()).unwrap().clone()
 }
 
+// Generics are supported
 #[metadata]
-#[derive(serde::Serialize, serde::Deserialize, Default)]
-pub struct Hello {
+#[derive(Serialize, Deserialize, Default)]
+pub struct Hello<T: Serialize> {
     name: String,
+    vec: Vec<T>,
 }
 
 #[metadata]
-async fn add_root(Path(_): Path<usize>, Json(hello): Json<Hello>) -> Json<Vec<Hello>> {
-    vec![hello].into()
+#[derive(Serialize, Deserialize, Default)]
+struct Age {
+    #[into(String)]
+    age: AgeInner,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct AgeInner {
+    age: u8,
+}
+
+#[metadata]
+async fn add_root(Path(_): Path<usize>, Json(hello): Json<Hello<Age>>) -> Json<String> {
+    Json(hello.name.to_string())
 }
 
 #[tokio::main]

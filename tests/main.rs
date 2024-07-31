@@ -4,6 +4,7 @@ use axum::{
     Json,
 };
 use gluer::{extract, metadata, Api};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 #[metadata]
@@ -11,30 +12,29 @@ async fn fetch_root(Query(test): Query<HashMap<String, String>>, Path(p): Path<u
     test.get(&p.to_string()).unwrap().clone()
 }
 
+// Generics are supported
 #[metadata]
-#[derive(serde::Serialize, serde::Deserialize, Default)]
-pub struct Hello {
+#[derive(Serialize, Deserialize, Default)]
+pub struct Hello<T: Serialize> {
     name: String,
-    #[into(String)]
-    age: Age,
-    age2: Age,
+    vec: Vec<T>,
 }
 
 #[metadata]
-#[derive(serde::Serialize, serde::Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default)]
 struct Age {
+    #[into(String)]
     age: AgeInner,
 }
 
-#[metadata]
-#[derive(serde::Serialize, serde::Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default)]
 struct AgeInner {
     age: u8,
 }
 
 #[metadata]
-async fn add_root(Path(_): Path<usize>, Json(hello): Json<Hello>) -> Json<Vec<Hello>> {
-    vec![hello].into()
+async fn add_root(Path(_): Path<usize>, Json(hello): Json<Hello<Age>>) -> Json<String> {
+    Json(hello.name.to_string())
 }
 
 #[tokio::test]

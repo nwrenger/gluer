@@ -1,8 +1,13 @@
-export interface Hello {
-    name: string;
+export interface Age {
+    age: string;
 }
 
-export async function add_root(path: number, data: Hello): Promise<Hello[]> {
+export interface Hello<T> {
+    name: string;
+    vec: T[];
+}
+
+export async function add_root(path: number, data: Hello<Age>): Promise<string> {
     const response = await fetch(`/${encodeURIComponent(path)}`, {
         method: "POST",
         headers: {
