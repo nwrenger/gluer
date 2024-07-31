@@ -65,18 +65,20 @@ where
 
     /// Generate frontend TypeScript API client from the API routes.
     pub fn generate_client<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), String> {
-        let fetch_api_function = r#"async function fetchApi(endpoint: string, options: RequestInit): Promise<any> {
-    const response = await fetch(endpoint, {
-        headers: {
-            "Content-Type": "application/json",
-            ...options.headers,
-        },
-        ...options,
-    });
-    return response.json();
-}
-
+        let fetch_api_function = r#"    async function fetchApi(endpoint: string, options: RequestInit): Promise<any> {
+        const response = await fetch(endpoint, {
+            headers: {
+                "Content-Type": "application/json",
+                ...options.headers,
+            },
+            ...options,
+        });
+        return response.json();
+    }
 "#;
+        let namespace_start = "namespace api {\n";
+        let namespace_end = "}\n\nexport default api;";
+
         let mut ts_functions = BTreeMap::new();
         let mut ts_interfaces: BTreeMap<String, String> = BTreeMap::new();
 
@@ -115,7 +117,15 @@ where
             }
         }
 
-        write_to_file(path, fetch_api_function, ts_interfaces, ts_functions)?;
+        write_to_file(
+            path,
+            fetch_api_function,
+            namespace_start,
+            namespace_end,
+            ts_interfaces,
+            ts_functions,
+        )
+        .map_err(|e| format!("Failed to write to file: {}", e))?;
 
         Ok(())
     }
@@ -198,12 +208,12 @@ fn generate_ts_interface(
     } else {
         format!("<{}>", generics.join(", "))
     };
-    let mut interface = format!("export interface {}{} {{\n", struct_name, generics_str);
+    let mut interface = format!("    export interface {}{} {{\n", struct_name, generics_str);
     for Field { name, ty } in fields {
         let ty = ty_to_ts(ty, generics, ts_interfaces).unwrap();
-        interface.push_str(&format!("    {}: {};\n", name, ty.unwrap()));
+        interface.push_str(&format!("        {}: {};\n", name, ty.unwrap()));
     }
-    interface.push_str("}\n\n");
+    interface.push_str("    }\n");
     interface
 }
 
@@ -248,12 +258,11 @@ fn generate_ts_function(
     }
 
     format!(
-        r#"export async function {fn_name}({params_str}): Promise<{response_type}> {{
-    return fetchApi(`{url}`, {{
-        method: "{method}", {body_assignment}
-    }});
-}}
-
+        r#"    export async function {fn_name}({params_str}): Promise<{response_type}> {{
+        return fetchApi(`{url}`, {{
+            method: "{method}", {body_assignment}
+        }});
+    }}
 "#,
         fn_name = fn_name,
         params_str = params_str,
@@ -372,23 +381,32 @@ fn ty_to_ts<'a>(
 fn write_to_file<P: AsRef<std::path::Path>>(
     path: P,
     fetch_api_function: &str,
+    namespace_start: &str,
+    namespace_end: &str,
     ts_interfaces: BTreeMap<String, String>,
     ts_functions: BTreeMap<String, String>,
-) -> Result<(), String> {
-    let mut file = File::create(path).map_err(|e| format!("Failed to create file: {}", e))?;
+) -> std::io::Result<()> {
+    let mut file = File::create(path)?;
+
+    file.write_all(namespace_start.as_bytes())?;
 
     for interface in ts_interfaces.values() {
-        file.write_all(interface.as_bytes())
-            .map_err(|e| format!("Failed to write to file: {}", e))?;
+        file.write_all(interface.as_bytes())?;
+        file.write_all(b"\n").unwrap();
     }
 
-    file.write_all(fetch_api_function.as_bytes())
-        .map_err(|e| format!("Failed to write to file: {}", e))?;
+    file.write_all(fetch_api_function.as_bytes())?;
+    file.write_all(b"\n").unwrap();
 
-    for function in ts_functions.values() {
-        file.write_all(function.as_bytes())
-            .map_err(|e| format!("Failed to write to file: {}", e))?;
+    for (i, function) in ts_functions.values().enumerate() {
+        file.write_all(function.as_bytes())?;
+        if ts_functions.len() - 1 > i {
+            file.write_all(b"\n").unwrap();
+        }
     }
+
+    file.write_all(namespace_end.as_bytes())?;
+    file.write_all(b"\n").unwrap();
 
     Ok(())
 }

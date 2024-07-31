@@ -125,49 +125,62 @@ fn generate_struct_const(
 
     let mut dependencies = HashMap::new();
 
-    let fields = item_struct
-        .fields
-        .iter_mut()
-        .map(|field| {
-            let ident = field
-                .ident
-                .clone()
-                .ok_or_else(|| syn::Error::new(field.span(), "Unnamed field not supported"))?
-                .to_string();
+    let item_struct_fields = item_struct.fields.clone();
 
-            let conversion_fn = parse_field_attr(&field.attrs)?;
+    let fields = item_struct_fields
+        .iter()
+        .enumerate()
+        .filter_map(|(i, field)| {
+            let ident = match field.ident.clone() {
+                Some(ident) => ident.to_string(),
+                None => {
+                    return Some(Err(syn::Error::new(
+                        field.span(),
+                        "Unnamed field not supported",
+                    )))
+                }
+            };
 
-            // clean off all "into" attributes
-            field.attrs = field
-                .attrs
-                .iter()
-                .filter(|attr| !attr.path().is_ident("into"))
-                .cloned()
-                .collect();
+            let meta_attr = match parse_field_attr(&field.attrs) {
+                Ok(meta_attr) => meta_attr,
+                Err(e) => return Some(Err(e)),
+            };
 
-            let field_ty = if let Some(conv_fn) = conversion_fn.clone() {
+            let MetaAttr { into, skip } = meta_attr;
+
+            // Clean off all "meta" attributes
+            if let Some(field) = item_struct.fields.iter_mut().nth(i) {
+                field.attrs.retain(|attr| !attr.path().is_ident("meta"));
+            }
+
+            let field_ty = if let Some(conv_fn) = into.clone() {
                 conv_fn.to_token_stream().to_string()
             } else {
                 field.ty.to_token_stream().to_string()
             };
 
-            if conversion_fn.is_none() {
-                if let Some(RustType {
-                    is_basic, inner_ty, ..
-                }) = basic_rust_type(&field.ty, &generics)?
-                {
-                    if !is_basic {
-                        dependencies.insert(
-                            inner_ty.clone(),
-                            format!("STRUCT_{}", inner_ty.to_uppercase()),
-                        );
+            if skip {
+                return None;
+            }
+
+            if into.is_none() {
+                match basic_rust_type(&field.ty, &generics) {
+                    Ok(Some(RustType {
+                        is_basic, inner_ty, ..
+                    })) => {
+                        if !is_basic {
+                            dependencies.insert(
+                                inner_ty.clone(),
+                                format!("STRUCT_{}", inner_ty.to_uppercase()),
+                            );
+                        }
                     }
-                } else {
-                    return Err(s_err(field.span(), "Unsupported field type"));
+                    Ok(None) => return Some(Err(s_err(field.span(), "Unsupported field type"))),
+                    Err(e) => return Some(Err(e)),
                 }
             }
 
-            Ok((ident, field_ty))
+            Some(Ok((ident, field_ty)))
         })
         .collect::<syn::Result<Vec<_>>>()?;
 
@@ -204,30 +217,39 @@ fn generate_struct_const(
     ))
 }
 
-fn parse_field_attr(attrs: &[syn::Attribute]) -> syn::Result<Option<syn::Type>> {
-    if let Some(attr) = attrs.iter().next() {
-        if !attr.path().is_ident("into") {
-            return Ok(None);
+struct MetaAttr {
+    into: Option<syn::Type>,
+    skip: bool,
+}
+
+fn parse_field_attr(attrs: &[syn::Attribute]) -> syn::Result<MetaAttr> {
+    let mut meta_attr = MetaAttr {
+        into: None,
+        skip: false,
+    };
+
+    for attr in attrs {
+        if !attr.path().is_ident("meta") {
+            continue;
         }
 
-        if let syn::Meta::List(meta) = &attr.meta {
-            let path: syn::Expr = meta.parse_args()?;
-            let path = syn::parse2::<syn::Type>(quote!(#path))?;
-            return Ok(Some(path.clone()));
-        }
-
-        if let syn::Meta::NameValue(meta) = &attr.meta {
-            if let syn::Expr::Lit(expr) = &meta.value {
-                if let syn::Lit::Str(lit_str) = &expr.lit {
-                    return lit_str.parse().map(Some);
-                }
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("into") {
+                meta.input.parse::<syn::Token![=]>()?;
+                let ty: syn::Type = meta.input.parse()?;
+                meta_attr.into = Some(ty);
+                return Ok(());
             }
-        }
 
-        let message = "expected #[into(...)]";
-        return Err(syn::Error::new_spanned(attr, message));
+            if meta.path.is_ident("skip") {
+                meta_attr.skip = true;
+                return Ok(());
+            }
+            Err(meta.error("expected #[meta(into = Type)] or #[meta(skip)]"))
+        })?;
     }
-    Ok(None)
+
+    Ok(meta_attr)
 }
 
 fn generate_fn_const(

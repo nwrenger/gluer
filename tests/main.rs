@@ -23,7 +23,7 @@ pub struct Hello<T: Serialize> {
 #[metadata]
 #[derive(Serialize, Deserialize, Default)]
 struct Age {
-    #[into(String)]
+    #[meta(into = String)]
     age: AgeInner,
 }
 
