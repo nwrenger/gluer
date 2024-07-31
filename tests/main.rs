@@ -15,6 +15,21 @@ async fn fetch_root(Query(test): Query<HashMap<String, String>>, Path(p): Path<u
 #[derive(serde::Serialize, serde::Deserialize, Default)]
 pub struct Hello {
     name: String,
+    #[into(String)]
+    age: Age,
+    age2: Age,
+}
+
+#[metadata]
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct Age {
+    age: AgeInner,
+}
+
+#[metadata]
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct AgeInner {
+    age: u8,
 }
 
 #[metadata]

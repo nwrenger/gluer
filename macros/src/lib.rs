@@ -91,10 +91,10 @@ pub fn metadata(args: pc::TokenStream, input: pc::TokenStream) -> pc::TokenStrea
 
 fn metadata_inner(args: TokenStream, input: TokenStream) -> syn::Result<TokenStream> {
     let span = input.span();
-    let item = syn::parse2::<syn::Item>(input.clone())?;
+    let item = syn::parse2::<syn::Item>(input)?;
     let _args = syn::parse2::<NoArgs>(args)?;
 
-    let generated_const = match item.clone() {
+    let (generated_const, ret) = match item {
         syn::Item::Struct(item_struct) => generate_struct_const(item_struct)?,
         syn::Item::Fn(item_fn) => generate_fn_const(item_fn)?,
         _ => return Err(s_err(span, "Expected struct or function")),
@@ -102,24 +102,57 @@ fn metadata_inner(args: TokenStream, input: TokenStream) -> syn::Result<TokenStr
 
     Ok(quote! {
         #generated_const
-        #item
+        #ret
     })
 }
 
-fn generate_struct_const(item_struct: syn::ItemStruct) -> syn::Result<TokenStream> {
+fn generate_struct_const(
+    mut item_struct: syn::ItemStruct,
+) -> syn::Result<(TokenStream, TokenStream)> {
     let struct_name = item_struct.ident.to_string();
     let vis = &item_struct.vis;
+    let mut dependencies = HashMap::new();
+
     let fields = item_struct
         .fields
-        .into_iter()
+        .iter_mut()
         .map(|field| {
             let ident = field
                 .ident
                 .clone()
                 .ok_or_else(|| s_err(field.span(), "Unnamed field not supported"))?
                 .to_string();
-            let ty = field.ty.into_token_stream().to_string();
-            Ok((ident, ty))
+
+            let conversion_fn = parse_field_attr(&field.attrs)?;
+
+            // clean off all "info" attributes
+            field.attrs = field
+                .attrs
+                .iter()
+                .filter(|attr| attr.path().is_ident("info"))
+                .cloned()
+                .collect();
+
+            let field_ty = if let Some(conv_fn) = conversion_fn.clone() {
+                conv_fn.to_token_stream().to_string()
+            } else {
+                field.ty.to_token_stream().to_string()
+            };
+
+            if conversion_fn.is_none() {
+                if let Some((is_basic, _, inner_ty)) = basic_rust_type(&field.ty)? {
+                    if !is_basic {
+                        dependencies.insert(
+                            inner_ty.clone(),
+                            format!("STRUCT_{}", inner_ty.to_uppercase()),
+                        );
+                    }
+                } else {
+                    return Err(s_err(field.span(), "Unsupported field type"));
+                }
+            }
+
+            Ok((ident, field_ty))
         })
         .collect::<syn::Result<Vec<_>>>()?;
 
@@ -132,12 +165,50 @@ fn generate_struct_const(item_struct: syn::ItemStruct) -> syn::Result<TokenStrea
         quote! { gluer::Field { name: #ident, ty: #ty } }
     });
 
-    Ok(quote! {
-        #vis const #const_ident: gluer::StructInfo = gluer::StructInfo { name: #struct_name, fields: &[#(#const_value),*] };
-    })
+    let dependencies_quote = dependencies.values().map(|struct_name| {
+        let struct_const = syn::Ident::new(struct_name, proc_macro2::Span::call_site());
+        quote! { #struct_const }
+    });
+
+    let item_struct = quote! { #item_struct };
+
+    Ok((
+        quote! {
+            #vis const #const_ident: gluer::StructInfo = gluer::StructInfo { name: #struct_name, fields: &[#(#const_value),*], dependencies: &[#(#dependencies_quote),*] };
+        },
+        item_struct,
+    ))
 }
 
-fn generate_fn_const(item_fn: syn::ItemFn) -> syn::Result<TokenStream> {
+fn parse_field_attr(attrs: &[syn::Attribute]) -> syn::Result<Option<syn::Type>> {
+    if let Some(attr) = attrs.iter().next() {
+        if !attr.path().is_ident("into") {
+            return Ok(None);
+        }
+
+        if let syn::Meta::List(meta) = &attr.meta {
+            let path: syn::Expr = meta.parse_args()?;
+            let path = syn::parse2::<syn::Type>(quote!(#path))?;
+            return Ok(Some(path.clone()));
+        }
+
+        if let syn::Meta::NameValue(meta) = &attr.meta {
+            if let syn::Expr::Lit(expr) = &meta.value {
+                if let syn::Lit::Str(lit_str) = &expr.lit {
+                    return lit_str.parse().map(Some);
+                }
+            }
+        }
+
+        let message = "expected #[into = \"...\"]";
+        return Err(syn::Error::new_spanned(attr, message));
+    }
+    Ok(None)
+}
+
+fn generate_fn_const(
+    item_fn: syn::ItemFn,
+) -> syn::Result<(proc_macro2::TokenStream, proc_macro2::TokenStream)> {
     let fn_name = item_fn.sig.ident.to_string();
     let vis = &item_fn.vis;
     let mut structs = HashMap::new();
@@ -189,18 +260,23 @@ fn generate_fn_const(item_fn: syn::ItemFn) -> syn::Result<TokenStream> {
         quote! { gluer::Field { name: #pat, ty: #ty } }
     });
 
-    let structs_quote = structs.iter().map(|(_ty_str, struct_name)| {
+    let structs_quote = structs.values().map(|struct_name| {
         let struct_ident = syn::Ident::new(struct_name, proc_macro2::Span::call_site());
         quote! { #struct_ident }
     });
 
-    Ok(quote! {
-        #vis const #const_ident: gluer::FnInfo = gluer::FnInfo {
-            params: &[#(#const_value),*],
-            response: #response,
-            structs: &[#(#structs_quote),*]
-        };
-    })
+    let item_fn = quote! { #item_fn };
+
+    Ok((
+        quote! {
+            #vis const #const_ident: gluer::FnInfo = gluer::FnInfo {
+                params: &[#(#const_value),*],
+                response: #response,
+                structs: &[#(#structs_quote),*]
+            };
+        },
+        item_fn,
+    ))
 }
 
 struct NoArgs {}
@@ -252,7 +328,6 @@ fn basic_rust_type(ty: &syn::Type) -> syn::Result<Option<(bool, String, String)>
                                 | "f32"
                                 | "f64"
                                 | "String"
-                                | "Json"
                         );
                         return Ok(Some((is_basic, ty_name.clone(), ty_name)));
                     }
@@ -281,7 +356,25 @@ fn basic_rust_type(ty: &syn::Type) -> syn::Result<Option<(bool, String, String)>
                 }
             }
         }
-        syn::Type::Reference(syn::TypeReference { elem, .. }) => return basic_rust_type(&elem),
+        syn::Type::Reference(syn::TypeReference { elem, .. })
+        | syn::Type::Paren(syn::TypeParen { elem, .. })
+        | syn::Type::Group(syn::TypeGroup { elem, .. }) => return basic_rust_type(elem),
+        syn::Type::Tuple(elems) => {
+            if elems.elems.len() == 1 {
+                return basic_rust_type(&elems.elems[0]);
+            } else if elems.elems.is_empty() {
+                return Ok(Some((true, "()".to_string(), "()".to_string())));
+            }
+        }
+        syn::Type::Array(syn::TypeArray { elem, .. })
+        | syn::Type::Slice(syn::TypeSlice { elem, .. }) => {
+            if let Some((is_basic, outer_ty, inner_ty)) = basic_rust_type(elem)? {
+                let vec_type = format!("Vec<{}>", outer_ty);
+                return Ok(Some((is_basic, vec_type, inner_ty)));
+            } else {
+                return Ok(None);
+            }
+        }
         _ => {}
     }
     Err(s_err(

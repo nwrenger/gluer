@@ -71,10 +71,16 @@ where
         for route in &self.api_routes {
             if !route.fn_info.structs.is_empty() {
                 for struct_info in route.fn_info.structs {
+                    Self::deps(struct_info.dependencies, &mut ts_interfaces);
+                    let ts_interfaces_clone = ts_interfaces.clone();
                     ts_interfaces
                         .entry(struct_info.name.to_string())
                         .or_insert_with(|| {
-                            generate_ts_interface(struct_info.name, struct_info.fields)
+                            generate_ts_interface(
+                                struct_info.name,
+                                struct_info.fields,
+                                &ts_interfaces_clone,
+                            )
                         });
                 }
             }
@@ -111,6 +117,23 @@ where
         Ok(())
     }
 
+    fn deps(dependencies: &[StructInfo], ts_interfaces: &mut BTreeMap<String, String>) {
+        for StructInfo {
+            name,
+            fields,
+            dependencies,
+        } in dependencies
+        {
+            if !dependencies.is_empty() {
+                Self::deps(dependencies, ts_interfaces);
+            }
+            let ts_interfaces_clone = ts_interfaces.clone();
+            ts_interfaces
+                .entry(name.to_string())
+                .or_insert_with(move || generate_ts_interface(name, fields, &ts_interfaces_clone));
+        }
+    }
+
     /// Convert into an `axum::Router`.
     pub fn into_router(self) -> Router<S> {
         self.router
@@ -126,6 +149,7 @@ where
     }
 }
 
+#[derive(Debug)]
 /// Route information.
 pub struct Route<'a> {
     pub url: &'a str,
@@ -135,7 +159,7 @@ pub struct Route<'a> {
 }
 
 /// Function information.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct FnInfo<'a> {
     pub params: &'a [Field<'a>],
     pub response: &'a str,
@@ -143,22 +167,28 @@ pub struct FnInfo<'a> {
 }
 
 /// Struct information.
+#[derive(Clone, Debug)]
 pub struct StructInfo<'a> {
     pub name: &'a str,
     pub fields: &'a [Field<'a>],
+    pub dependencies: &'a [StructInfo<'a>],
 }
 
 /// Field information.
+#[derive(Debug)]
 pub struct Field<'a> {
     pub name: &'a str,
     pub ty: &'a str,
 }
 
-fn generate_ts_interface(struct_name: &str, fields: &[Field]) -> String {
+fn generate_ts_interface(
+    struct_name: &str,
+    fields: &[Field],
+    ts_interfaces: &BTreeMap<String, String>,
+) -> String {
     let mut interface = format!("export interface {} {{\n", struct_name);
-    for Field { name, ty } in fields {
-        let bind = BTreeMap::new();
-        let ty = ty_to_ts(ty, &bind).unwrap();
+    for Field { name, ty } in dbg!(fields) {
+        let ty = ty_to_ts(ty, ts_interfaces).unwrap();
         interface.push_str(&format!("    {}: {};\n", name, ty.unwrap()));
     }
     interface.push_str("}\n\n");
@@ -252,10 +282,11 @@ fn ty_to_ts<'a>(
     ty: &'a str,
     ts_interfaces: &'a BTreeMap<String, String>,
 ) -> Result<Type<String>, String> {
-    if ts_interfaces.contains_key(ty) {
+    let ty = ty.trim().replace(" ", "");
+    if ts_interfaces.contains_key(ty.as_str()) {
         return Ok(Unknown(ty.to_string()));
     }
-    Ok(match ty {
+    Ok(match ty.as_str() {
         "str" | "String" => Unknown(String::from("string")),
         "usize" | "isize" | "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" | "f32"
         | "f64" => Unknown(String::from("number")),
@@ -267,24 +298,34 @@ fn ty_to_ts<'a>(
         }
         t if t.starts_with("Html<") => {
             let ty = ty_to_ts(&t[5..t.len() - 1], ts_interfaces)?.unwrap();
-            Unknown(format!("{}[]", ty))
+            Unknown(ty)
         }
         t if t.starts_with("Json<") => {
-            let ts_type = ty_to_ts(&t[5..t.len() - 1], ts_interfaces)?;
-            return Ok(Json(ts_type.unwrap()));
+            let ty = ty_to_ts(&t[5..t.len() - 1], ts_interfaces)?.unwrap();
+            Json(ty)
         }
         t if t.starts_with("Path<") => {
-            let ts_type = ty_to_ts(&t[5..t.len() - 1], ts_interfaces)?;
-            return Ok(Path(ts_type.unwrap()));
+            let ty = ty_to_ts(&t[5..t.len() - 1], ts_interfaces)?.unwrap();
+            Path(ty)
         }
         t if t.starts_with("Query<HashMap<") => {
-            let ts_type = ty_to_ts(&t[14..t.len() - 2], ts_interfaces)?;
-            return Ok(QueryMap(ts_type.unwrap()));
+            let ty = ty_to_ts(&t[14..t.len() - 2], ts_interfaces)?.unwrap();
+            QueryMap(ty)
         }
         t if t.starts_with("Query<") => {
-            let ts_type = ty_to_ts(&t[6..t.len() - 1], ts_interfaces)?;
-            return Ok(Query(ts_type.unwrap()));
+            let ty = ty_to_ts(&t[6..t.len() - 1], ts_interfaces)?.unwrap();
+            Query(ty)
         }
+        t if t.starts_with("Result<") => {
+            let ty: String = ty_to_ts(&t[7..t.len() - 1], ts_interfaces)?.unwrap();
+            Unknown(format!("{} | any", ty))
+        }
+        t if t.starts_with("Option<") => {
+            let ty: String = ty_to_ts(&t[7..t.len() - 1], ts_interfaces)?.unwrap();
+            Unknown(format!("{} | null", ty))
+        }
+        t if t.starts_with("&") => ty_to_ts(&t[1..t.len()], ts_interfaces)?,
+        t if t.starts_with("'static") => ty_to_ts(&t[7..t.len()], ts_interfaces)?,
         _ => return Err(format!("Type '{}' couldn't be converted to TypeScript", ty)),
     })
 }
