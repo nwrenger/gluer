@@ -52,9 +52,13 @@ use gluer::metadata;
 #[derive(Default, serde::Serialize)]
 struct Book {
     name: String,
-    // Sometimes you don't have access to certain data types, so you can override them using `#[meta(into = Type)]` or skip the entirely via `#[meta(skip)]`
+    // Sometimes you don't have access to certain data types, 
+    // so you can override them using `#[meta(into = Type)]` 
+    // or skip them entirely via `#[meta(skip)]`
     #[meta(into = String)]
     user: User,
+    #[meta(skip)]
+    borrower: User,
 }
 
 #[derive(Default, serde::Serialize)]
