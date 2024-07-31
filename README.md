@@ -16,7 +16,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-gluer = "0.4.1"
+gluer = "0.4.2"
 ```
 
 ## Features

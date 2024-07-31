@@ -1,6 +1,6 @@
 [package]
 name = "gluer-macros"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2021"
 authors = ["Nils Wrenger <nils@wrenger.net>"]
 description = "Procedural macros for the gluer framework"
@@ -15,5 +15,5 @@ proc-macro = true
 
 [dependencies]
 quote = "1.0"
-syn = { version = "2.0.62", features = ["full"] }
+syn = "2.0.62"
 proc-macro2 = "1.0"
