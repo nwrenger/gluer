@@ -16,7 +16,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-gluer = "0.4.0"
+gluer = "0.4.1"
 ```
 
 ## Features
@@ -27,6 +27,7 @@ Note: This crate is in an early stage and may not work in all cases. Please open
 - Infer input and output types of functions.
 - Support `axum`'s types completely.
 - Convert Rust structs to TypeScript interfaces.
+  - Via the `[#metadata]` attribute macro with the `#[meta(...)]` attribute
 - Generate a TypeScript file with:
   - Functions
   - Data types as Interfaces
@@ -38,7 +39,7 @@ Note: This crate is in an early stage and may not work in all cases. Please open
 
 ### Step 1: Define Structs and Functions
 
-Use the `#[metadata]` macro to define your data structures and functions. This macro allows `gluer` to generate metadata for these structs and functions as `const` values with the same visibility as the function or struct. When splitting these into other modules, you need to import these `const` values, but they are recognized by Rust's compiler, so there is no need to worry about that.
+Use the `#[metadata]` macro with the `#[meta(...)]` attribute to define your data structures and functions. This macro allows `gluer` to generate metadata for these structs and functions as `const` values with the same visibility as the function or struct. When splitting these into other modules, you need to import these `const` values, but they are recognized by Rust's compiler, so there is no need to worry about that.
 
 ```rust
 use axum::{
@@ -51,8 +52,8 @@ use gluer::metadata;
 #[derive(Default, serde::Serialize)]
 struct Book {
     name: String,
-    // Sometimes you don't have access to certain data types, so you can override them using `#[into(Type)]`
-    #[into(String)]
+    // Sometimes you don't have access to certain data types, so you can override them using `#[meta(into = Type)]` or skip the entirely via `#[meta(skip)]`
+    #[meta(into = String)]
     user: User,
 }
 
@@ -163,7 +164,7 @@ pub struct Hello<T: Serialize> {
 #[metadata]
 #[derive(Serialize, Deserialize, Default)]
 struct Age {
-    #[into(String)]
+    #[meta(into = String)]
     age: AgeInner,
 }
 
