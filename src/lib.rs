@@ -65,6 +65,18 @@ where
 
     /// Generate frontend TypeScript API client from the API routes.
     pub fn generate_client<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), String> {
+        let fetch_api_function = r#"async function fetchApi(endpoint: string, options: RequestInit): Promise<any> {
+    const response = await fetch(endpoint, {
+        headers: {
+            "Content-Type": "application/json",
+            ...options.headers,
+        },
+        ...options,
+    });
+    return response.json();
+}
+
+"#;
         let mut ts_functions = BTreeMap::new();
         let mut ts_interfaces: BTreeMap<String, String> = BTreeMap::new();
 
@@ -103,7 +115,7 @@ where
             }
         }
 
-        write_to_file(path, ts_interfaces, ts_functions)?;
+        write_to_file(path, fetch_api_function, ts_interfaces, ts_functions)?;
 
         Ok(())
     }
@@ -217,9 +229,9 @@ fn generate_ts_function(
         .join(", ");
 
     let body_assignment = if params_str.contains("data") {
-        "JSON.stringify(data)"
+        "\n        body: JSON.stringify(data)"
     } else {
-        "undefined"
+        ""
     };
 
     if params_str.contains("path") {
@@ -237,14 +249,9 @@ fn generate_ts_function(
 
     format!(
         r#"export async function {fn_name}({params_str}): Promise<{response_type}> {{
-    const response = await fetch(`{url}`, {{
-        method: "{method}",
-        headers: {{
-            "Content-Type": "application/json"
-        }},
-        body: {body_assignment}
+    return fetchApi(`{url}`, {{
+        method: "{method}", {body_assignment}
     }});
-    return response.json();
 }}
 
 "#,
@@ -364,6 +371,7 @@ fn ty_to_ts<'a>(
 
 fn write_to_file<P: AsRef<std::path::Path>>(
     path: P,
+    fetch_api_function: &str,
     ts_interfaces: BTreeMap<String, String>,
     ts_functions: BTreeMap<String, String>,
 ) -> Result<(), String> {
@@ -373,6 +381,9 @@ fn write_to_file<P: AsRef<std::path::Path>>(
         file.write_all(interface.as_bytes())
             .map_err(|e| format!("Failed to write to file: {}", e))?;
     }
+
+    file.write_all(fetch_api_function.as_bytes())
+        .map_err(|e| format!("Failed to write to file: {}", e))?;
 
     for function in ts_functions.values() {
         file.write_all(function.as_bytes())
