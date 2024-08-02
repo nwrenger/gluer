@@ -16,7 +16,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-gluer = "0.4.2"
+gluer = "0.5.0"
 ```
 
 ## Features
@@ -102,7 +102,8 @@ async fn hello() -> Json<String> {
 }
 
 let mut app: Api<()> = Api::new()
-    // Add non-API-important routes or state by accessing axum's Router directly via inner_router
+    // Add non-API-important routes or state by
+    // accessing axum's Router directly via inner_router
     .inner_router(|f| f.route("/", get(root)))
     // Add API-important routes with the route function
     .route("/hello-world", extract!(get(hello)));
