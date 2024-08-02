@@ -1,10 +1,6 @@
 namespace api {
     export interface Age {
-        age: AgeInner;
-    }
-
-    export interface AgeInner {
-        age: number;
+        age: string;
     }
 
     export interface Hello<T, S> {
@@ -39,7 +35,7 @@ namespace api {
 		return '';
 	}
 
-    export async function add_root(path: number, data: Hello<Hello<Huh<Age>, string>, string>): Promise<string> {
+    export async function add_root(path: number, data: Hello<Hello<Huh<Age>, Huh<string>>, string>): Promise<string> {
         return fetch_api(`/${encodeURIComponent(path)}`, {
             method: "POST", 
             body: JSON.stringify(data)
