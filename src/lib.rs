@@ -65,7 +65,7 @@ where
 
     /// Generate frontend TypeScript API client from the API routes.
     pub fn generate_client<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), String> {
-        let fetch_api_function = r#"    async function fetchApi(endpoint: string, options: RequestInit): Promise<any> {
+        let fetch_api_function = r#"    async function fetch_api(endpoint: string, options: RequestInit): Promise<any> {
         const response = await fetch(endpoint, {
             headers: {
                 "Content-Type": "application/json",
@@ -75,6 +75,18 @@ where
         });
         return response.json();
     }
+
+    function query_str(params: Record<string, any>): string {
+		if (params) {
+			let data: Record<string, string> = {};
+			for (let key in params) {
+				if (params[key] != null) data[key] = params[key].toString();
+			}
+			// the URLSearchParams escapes any problematic values
+			return '?' + new URLSearchParams(data).toString();
+		}
+		return '';
+	}
 "#;
         let namespace_start = "namespace api {\n";
         let namespace_end = "}\n\nexport default api;";
@@ -253,13 +265,12 @@ fn generate_ts_function(
         url += "?";
         url += "${new URLSearchParams(queryMap).toString()}";
     } else if params_str.contains("query") {
-        url += "?";
-        url += "${encodeURIComponent(query)}";
+        url += "${query_str(query)}";
     }
 
     format!(
         r#"    export async function {fn_name}({params_str}): Promise<{response_type}> {{
-        return fetchApi(`{url}`, {{
+        return fetch_api(`{url}`, {{
             method: "{method}", {body_assignment}
         }});
     }}

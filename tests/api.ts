@@ -16,7 +16,7 @@ namespace api {
         huh: T;
     }
 
-    async function fetchApi(endpoint: string, options: RequestInit): Promise<any> {
+    async function fetch_api(endpoint: string, options: RequestInit): Promise<any> {
         const response = await fetch(endpoint, {
             headers: {
                 "Content-Type": "application/json",
@@ -27,15 +27,27 @@ namespace api {
         return response.json();
     }
 
+    function query_str(params: Record<string, any>): string {
+		if (params) {
+			let data: Record<string, string> = {};
+			for (let key in params) {
+				if (params[key] != null) data[key] = params[key].toString();
+			}
+			// the URLSearchParams escapes any problematic values
+			return '?' + new URLSearchParams(data).toString();
+		}
+		return '';
+	}
+
     export async function add_root(path: number, data: Hello<Hello<Huh<Age>, string>, string>): Promise<string> {
-        return fetchApi(`/${encodeURIComponent(path)}`, {
+        return fetch_api(`/${encodeURIComponent(path)}`, {
             method: "POST", 
             body: JSON.stringify(data)
         });
     }
 
     export async function fetch_root(queryMap: Record<string, string>, path: number): Promise<string> {
-        return fetchApi(`/${encodeURIComponent(path)}?${new URLSearchParams(queryMap).toString()}`, {
+        return fetch_api(`/${encodeURIComponent(path)}?${new URLSearchParams(queryMap).toString()}`, {
             method: "GET", 
         });
     }
