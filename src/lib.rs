@@ -232,14 +232,14 @@ fn generate_ts_function(
             Json(ty) => Some(format!("data: {}", ty)),
             Path(ty) => Some(format!("path: {}", ty)),
             Query(ty) => Some(format!("query: {}", ty)),
-            QueryMap(ty) => Some(format!("queryMap: Record<string, {}>", ty)),
+            QueryMap(ty) => Some(format!("queryMap: Record{}", ty)),
             Unknown(_) => None,
         })
         .collect::<Vec<_>>()
         .join(", ");
 
     let body_assignment = if params_str.contains("data") {
-        "\n        body: JSON.stringify(data)"
+        "\n            body: JSON.stringify(data)"
     } else {
         ""
     };
@@ -330,8 +330,8 @@ fn ty_to_ts<'a>(
             let ty = ty_to_ts(inner_ty, generics, ts_interfaces)?.unwrap();
             Path(ty)
         }
-        t if t.starts_with("Query<HashMap<") => {
-            let inner_ty = &t[14..t.len() - 2];
+        t if t.starts_with("Query<HashMap") => {
+            let inner_ty = &t[13..t.len() - 1];
             let ty = ty_to_ts(inner_ty, generics, ts_interfaces)?.unwrap();
             QueryMap(ty)
         }
@@ -352,22 +352,7 @@ fn ty_to_ts<'a>(
         }
         t if t.starts_with("&") => ty_to_ts(&t[1..t.len()], generics, ts_interfaces)?,
         t if t.starts_with("'static") => ty_to_ts(&t[7..t.len()], generics, ts_interfaces)?,
-        t if t.contains('<') && t.contains('>') => {
-            let split: Vec<&str> = t.split('<').collect();
-            let base_ty = split[0];
-            let generic_params = &split[1][..split[1].len() - 1];
-
-            let generic_ts = generic_params
-                .split(',')
-                .map(|param| ty_to_ts(param, generics, ts_interfaces))
-                .collect::<Result<Vec<_>, _>>()?
-                .into_iter()
-                .map(|t| t.unwrap())
-                .collect::<Vec<_>>()
-                .join(", ");
-
-            Unknown(format!("{}<{}>", base_ty, generic_ts))
-        }
+        t if t.contains('<') && t.contains('>') => parse_generic_type(t, generics, ts_interfaces)?,
         t => {
             if let Some(t) = generics.iter().find(|p| **p == t) {
                 Unknown(t.to_string())
@@ -376,6 +361,70 @@ fn ty_to_ts<'a>(
             }
         }
     })
+}
+
+fn parse_generic_type<'a>(
+    t: &'a str,
+    generics: &[&str],
+    ts_interfaces: &'a BTreeMap<String, String>,
+) -> Result<Type<String>, String> {
+    let mut base_ty = String::new();
+    let mut generic_params = String::new();
+    let mut depth = 0;
+    let mut inside_generic = false;
+
+    for c in t.chars() {
+        if c == '<' {
+            depth += 1;
+            if depth == 1 {
+                inside_generic = true;
+                continue;
+            }
+        } else if c == '>' {
+            depth -= 1;
+            if depth == 0 {
+                inside_generic = false;
+                continue;
+            }
+        }
+
+        if inside_generic {
+            generic_params.push(c);
+        } else {
+            base_ty.push(c);
+        }
+    }
+
+    let mut params = Vec::new();
+    let mut current_param = String::new();
+    let mut param_depth = 0;
+
+    for c in generic_params.chars() {
+        if c == '<' {
+            param_depth += 1;
+        } else if c == '>' {
+            param_depth -= 1;
+        } else if c == ',' && param_depth == 0 {
+            params.push(current_param.trim().to_string());
+            current_param.clear();
+            continue;
+        }
+        current_param.push(c);
+    }
+    if !current_param.is_empty() {
+        params.push(current_param.trim().to_string());
+    }
+
+    let generic_ts = params
+        .into_iter()
+        .map(|param| ty_to_ts(&param, generics, ts_interfaces))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(|t| t.unwrap())
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    Ok(Unknown(format!("{}<{}>", base_ty, generic_ts)))
 }
 
 fn write_to_file<P: AsRef<std::path::Path>>(

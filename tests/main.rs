@@ -12,28 +12,39 @@ async fn fetch_root(Query(test): Query<HashMap<String, String>>, Path(p): Path<u
     test.get(&p.to_string()).unwrap().clone()
 }
 
-// Generics are supported
+// Generics are supported, multiple even
 #[metadata]
 #[derive(Serialize, Deserialize, Default)]
-pub struct Hello<T: Serialize> {
-    name: String,
+pub struct Hello<T: Serialize, S> {
+    name: S,
     vec: Vec<T>,
 }
 
 #[metadata]
 #[derive(Serialize, Deserialize, Default)]
 struct Age {
-    #[meta(into = String)]
+    // #[meta(into = String)]
     age: AgeInner,
 }
 
+#[metadata]
 #[derive(Serialize, Deserialize, Default)]
 struct AgeInner {
     age: u8,
 }
 
 #[metadata]
-async fn add_root(Path(_): Path<usize>, Json(hello): Json<Hello<Age>>) -> Json<String> {
+#[derive(Serialize, Deserialize, Default)]
+struct Huh<T> {
+    huh: T,
+}
+
+// Even deep nested generics are supported
+#[metadata]
+async fn add_root(
+    Path(_): Path<usize>,
+    Json(hello): Json<Hello<Hello<Huh<Age>, String>, String>>,
+) -> Json<String> {
     Json(hello.name.to_string())
 }
 

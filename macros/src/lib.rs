@@ -1,7 +1,10 @@
 use proc_macro::{self as pc};
 use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
-use std::{collections::HashMap, fmt, vec};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt, vec,
+};
 use syn::{parenthesized, parse::Parse, spanned::Spanned, TypeParam};
 
 fn s_err(span: proc_macro2::Span, msg: impl fmt::Display) -> syn::Error {
@@ -18,29 +21,31 @@ pub fn extract(input: pc::TokenStream) -> pc::TokenStream {
 }
 
 fn extract_inner(input: TokenStream) -> syn::Result<TokenStream> {
-    let ExtractArgs { routes } = syn::parse2::<ExtractArgs>(input.clone())?;
-    let original_input = input;
+    let ExtractArgs {
+        routes: original_routes,
+    } = syn::parse2::<ExtractArgs>(input.clone())?;
 
-    let routes = routes.iter().map(|Route { method, handler }| {
+    let routes = original_routes.iter().map(|Route { method, handler }| {
         let method_name = method.to_string();
         let handler_name = handler.to_string();
 
-        let fn_info = syn::Ident::new(
-            &format!("FN_{}", handler_name.to_uppercase()),
-            proc_macro2::Span::call_site(),
-        );
+        let fn_info = syn::Ident::new(&handler_name, proc_macro2::Span::call_site());
+        let fn_info = quote! { #fn_info::metadata() };
 
         quote! {
-            gluer::Route {
-                url: "",
-                method: #method_name,
-                fn_name: #handler_name,
-                fn_info: #fn_info,
+            {
+                const ROUTE: gluer::Route<'static> = gluer::Route {
+                    url: "",
+                    method: #method_name,
+                    fn_name: #handler_name,
+                    fn_info: #fn_info,
+                };
+                ROUTE
             }
         }
     });
 
-    Ok(quote! { ( #original_input, &[#(#routes,)*] )})
+    Ok(quote! { ( #(#original_routes).*, &[#(#routes,)*] )})
 }
 
 struct ExtractArgs {
@@ -80,6 +85,14 @@ impl Parse for Route {
     }
 }
 
+impl ToTokens for Route {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let method = &self.method;
+        let handler = &self.handler;
+        tokens.extend(quote! { #method(#handler::#handler) });
+    }
+}
+
 /// Put before structs or functions to be usable by the `glue` crate.
 #[proc_macro_attribute]
 pub fn metadata(args: pc::TokenStream, input: pc::TokenStream) -> pc::TokenStream {
@@ -94,22 +107,38 @@ fn metadata_inner(args: TokenStream, input: TokenStream) -> syn::Result<TokenStr
     let item = syn::parse2::<syn::Item>(input)?;
     let _args = syn::parse2::<NoArgs>(args)?;
 
-    let (generated_const, ret) = match item {
-        syn::Item::Struct(item_struct) => generate_struct_const(item_struct)?,
-        syn::Item::Fn(item_fn) => generate_fn_const(item_fn)?,
+    let out = match item {
+        syn::Item::Struct(item_struct) => generate_struct(item_struct)?,
+        syn::Item::Fn(item_fn) => generate_function(item_fn)?,
         _ => return Err(s_err(span, "Expected struct or function")),
     };
 
     Ok(quote! {
-        #generated_const
-        #ret
+        #out
     })
 }
 
-fn generate_struct_const(
-    mut item_struct: syn::ItemStruct,
-) -> syn::Result<(TokenStream, TokenStream)> {
-    let struct_name = item_struct.ident.to_string();
+struct NoArgs {}
+
+impl syn::parse::Parse for NoArgs {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        if !input.is_empty() {
+            return Err(input.error("No arguments expected"));
+        }
+        Ok(NoArgs {})
+    }
+}
+
+fn generate_struct(mut item_struct: syn::ItemStruct) -> syn::Result<TokenStream> {
+    let struct_name_ident = item_struct.ident.clone();
+    let generics_ident_no_types =
+        if let Some(g) = extract_type_params_as_type(&item_struct.generics)? {
+            quote! { #g }
+        } else {
+            quote! {}
+        };
+    let generics_ident = item_struct.generics.clone();
+    let struct_name = struct_name_ident.to_string();
     let vis = &item_struct.vis;
     let generics: Vec<String> = item_struct
         .generics
@@ -123,7 +152,7 @@ fn generate_struct_const(
         })
         .collect();
 
-    let mut dependencies = HashMap::new();
+    let mut dependencies: Vec<String> = Vec::new();
 
     let item_struct_fields = item_struct.fields.clone();
 
@@ -164,19 +193,36 @@ fn generate_struct_const(
             }
 
             if into.is_none() {
-                match basic_rust_type(&field.ty, &generics) {
-                    Ok(Some(RustType {
-                        is_basic, inner_ty, ..
-                    })) => {
-                        if !is_basic {
-                            dependencies.insert(
-                                inner_ty.clone(),
-                                format!("STRUCT_{}", inner_ty.to_uppercase()),
-                            );
-                        }
-                    }
-                    Ok(None) => return Some(Err(s_err(field.span(), "Unsupported field type"))),
+                let _ = match check(&field.ty, field.span(), &mut dependencies, &generics) {
+                    Ok(_) => {}
                     Err(e) => return Some(Err(e)),
+                };
+                fn check(
+                    ty: &syn::Type,
+                    span: proc_macro2::Span,
+                    dependencies: &mut Vec<String>,
+                    generics: &Vec<String>,
+                ) -> syn::Result<()> {
+                    match check_rust_type(ty) {
+                        Some(RustType2::Custom(inner_ty))
+                        | Some(RustType2::CustomGeneric(inner_ty, _)) => {
+                            if !dependencies.contains(&inner_ty) && !generics.contains(&inner_ty) {
+                                dependencies.push(inner_ty);
+                            }
+                        }
+
+                        Some(RustType2::Generic(_, inner_tys)) => {
+                            for inner in inner_tys {
+                                let ty =
+                                    syn::parse_str::<syn::Type>(&inner.into_tokens().to_string())?;
+                                check(&ty, span, dependencies, generics)?;
+                            }
+                        }
+
+                        Some(_) => {}
+                        None => return Err(syn::Error::new(span, "Unsupported field type")),
+                    }
+                    Ok(())
                 }
             }
 
@@ -184,18 +230,13 @@ fn generate_struct_const(
         })
         .collect::<syn::Result<Vec<_>>>()?;
 
-    let const_ident = syn::Ident::new(
-        &format!("STRUCT_{}", struct_name.to_uppercase()),
-        proc_macro2::Span::call_site(),
-    );
-
     let const_value = fields.iter().map(|(ident, ty)| {
         quote! { gluer::Field { name: #ident, ty: #ty } }
     });
 
-    let dependencies_quote = dependencies.values().map(|struct_name| {
-        let struct_const = syn::Ident::new(struct_name, proc_macro2::Span::call_site());
-        quote! { #struct_const }
+    let dependencies_quote = dependencies.iter().map(|struct_name| {
+        let struct_ident = syn::Ident::new(struct_name, proc_macro2::Span::call_site());
+        quote! { #struct_ident::metadata() }
     });
 
     let generics_quote = generics.iter().map(|generic| {
@@ -204,17 +245,38 @@ fn generate_struct_const(
 
     let item_struct = quote! { #item_struct };
 
-    Ok((
-        quote! {
-            #vis const #const_ident: gluer::StructInfo = gluer::StructInfo {
-                name: #struct_name,
-                generics: &[#(#generics_quote),*],
-                fields: &[#(#const_value),*],
-                dependencies: &[#(#dependencies_quote),*]
-            };
-        },
-        item_struct,
-    ))
+    Ok(quote! {
+        #item_struct
+
+        impl #generics_ident #struct_name_ident #generics_ident_no_types {
+            #vis const fn metadata() -> gluer::StructInfo<'static> {
+                const STRUCT_INFO: gluer::StructInfo<'static> = gluer::StructInfo {
+                    name: #struct_name,
+                    generics: &[#(#generics_quote),*],
+                    fields: &[#(#const_value),*],
+                    dependencies: &[#(#dependencies_quote),*]
+                };
+                STRUCT_INFO
+            }
+        }
+    })
+}
+
+// Function to extract type parameters and convert them into a syn::Type
+fn extract_type_params_as_type(generics: &syn::Generics) -> syn::Result<Option<syn::Generics>> {
+    let type_params: Vec<String> = generics
+        .type_params()
+        .map(|type_param| type_param.ident.to_string())
+        .collect();
+
+    if type_params.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(syn::parse_str(&format!(
+        "<{}>",
+        type_params.join(", ")
+    ))?))
 }
 
 struct MetaAttr {
@@ -252,13 +314,10 @@ fn parse_field_attr(attrs: &[syn::Attribute]) -> syn::Result<MetaAttr> {
     Ok(meta_attr)
 }
 
-fn generate_fn_const(
-    item_fn: syn::ItemFn,
-) -> syn::Result<(proc_macro2::TokenStream, proc_macro2::TokenStream)> {
-    let fn_name = item_fn.sig.ident.to_string();
+fn generate_function(item_fn: syn::ItemFn) -> syn::Result<proc_macro2::TokenStream> {
+    let fn_name_ident = item_fn.sig.ident.clone();
     let vis = &item_fn.vis;
     let mut structs = HashMap::new();
-    let generics: Vec<String> = vec![];
 
     let params = item_fn
         .sig
@@ -267,247 +326,260 @@ fn generate_fn_const(
         .filter_map(|param| match param {
             syn::FnArg::Typed(syn::PatType { pat, ty, .. }) => {
                 let pat = pat.to_token_stream().to_string();
-                if let Some(RustType {
-                    is_basic,
-                    outer_ty,
-                    inner_ty,
-                    is_generic: (is_generic, is_basic_generic),
-                }) = basic_rust_type(ty, &generics).ok()?
-                {
-                    if !is_basic {
-                        let struct_const = format!("STRUCT_{}", inner_ty.to_uppercase());
-                        structs.insert(inner_ty.clone(), struct_const);
-                    }
-                    if is_generic && !is_basic_generic {
-                        let ty = outer_ty.clone();
-                        let ty = ty.split("<").last().unwrap();
-                        let ty = ty.replace('>', "").replace(" ", "");
-                        let struct_const = format!("STRUCT_{}", ty.to_uppercase());
-                        structs.insert(ty.clone(), struct_const);
-                    }
-                    Some(Ok((pat, outer_ty)))
+                if let Some(rust_type) = check_rust_type(ty) {
+                    process_rust_type(&rust_type, &mut structs);
+
+                    Some(Ok((pat, rust_type)))
                 } else {
                     None
                 }
             }
-            syn::FnArg::Receiver(_) => {
-                Some(Err(s_err(param.span(), "Receiver parameter not allowed")))
-            }
+            syn::FnArg::Receiver(_) => Some(Err(syn::Error::new(
+                param.span(),
+                "Receiver parameter not allowed",
+            ))),
         })
         .collect::<syn::Result<Vec<_>>>()?;
 
     let response = match &item_fn.sig.output {
         syn::ReturnType::Type(_, ty) => {
-            if let Some(RustType {
-                is_basic,
-                outer_ty,
-                inner_ty,
-                is_generic: (is_generic, is_basic_generic),
-            }) = basic_rust_type(ty, &generics)?
-            {
-                if !is_basic {
-                    let struct_const = format!("STRUCT_{}", inner_ty.to_uppercase());
-                    structs.insert(inner_ty.clone(), struct_const);
-                }
-                if is_generic && !is_basic_generic {
-                    let ty = outer_ty.clone();
-                    let ty = ty.split("<").last().unwrap();
-                    let ty = ty.replace('>', "").replace(" ", "");
-                    let struct_const = format!("STRUCT_{}", ty.to_uppercase());
-                    structs.insert(ty.clone(), struct_const);
-                }
-                outer_ty
+            if let Some(rust_type) = check_rust_type(ty) {
+                process_rust_type(&rust_type, &mut structs);
+
+                rust_type
             } else {
-                return Err(s_err(ty.span(), "Unsupported return type"));
+                return Err(syn::Error::new(ty.span(), "Unsupported return type"));
             }
         }
-        syn::ReturnType::Default => "()".to_string(),
+        syn::ReturnType::Default => RustType2::BuiltIn("()".to_string()),
     };
 
-    let const_ident = syn::Ident::new(
-        &format!("FN_{}", fn_name.to_uppercase()),
-        proc_macro2::Span::call_site(),
-    );
-
-    let const_value = params.iter().map(|(pat, ty)| {
+    let params_types = params.iter().map(|(pat, ty)| {
+        let ty = ty.to_token_stream().to_string();
         quote! { gluer::Field { name: #pat, ty: #ty } }
     });
 
-    let structs_quote = structs.values().map(|struct_name| {
-        let struct_ident = syn::Ident::new(struct_name, proc_macro2::Span::call_site());
-        quote! { #struct_ident }
-    });
+    let response = {
+        let ty = response.to_token_stream().to_string();
+        quote! { #ty }
+    };
 
-    let item_fn = quote! { #item_fn };
+    let structs_quote = structs
+        .iter()
+        .map(|(struct_name, generics_info)| {
+            generate_struct_metadata(struct_name, generics_info).map_err(|e| e.into())
+        })
+        .collect::<Result<Vec<_>, syn::Error>>()?;
 
-    Ok((
-        quote! {
-            #vis const #const_ident: gluer::FnInfo = gluer::FnInfo {
-                params: &[#(#const_value),*],
-                response: #response,
-                structs: &[#(#structs_quote),*]
-            };
-        },
-        item_fn,
-    ))
-}
+    Ok(quote! {
+        #[allow(non_camel_case_types, missing_docs)]
+        #vis struct #fn_name_ident;
 
-struct NoArgs {}
+        impl #fn_name_ident {
+            #item_fn
 
-impl syn::parse::Parse for NoArgs {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        if !input.is_empty() {
-            return Err(input.error("No arguments expected"));
-        }
-        Ok(NoArgs {})
-    }
-}
-
-struct RustType {
-    is_basic: bool,
-    outer_ty: String,
-    inner_ty: String,
-    is_generic: (bool, bool),
-}
-
-impl RustType {
-    fn new(is_basic: bool, outer_ty: String, inner_ty: String, is_generic: (bool, bool)) -> Self {
-        RustType {
-            is_basic,
-            outer_ty,
-            inner_ty,
-            is_generic,
-        }
-    }
-}
-
-/// Returns a tuple (bool, outermost_type, innermost_type, (is_generic, is_basic_generic))
-fn basic_rust_type(ty: &syn::Type, generics: &Vec<String>) -> syn::Result<Option<RustType>> {
-    let ty_str = ty.to_token_stream().to_string();
-    match ty {
-        syn::Type::Path(syn::TypePath { path, .. }) => {
-            if let Some(segment) = path.segments.last() {
-                let ty_name = segment.ident.to_string();
-
-                if generics.contains(&ty_name) {
-                    return Ok(Some(RustType::new(
-                        true,
-                        ty_name.clone(),
-                        ty_name,
-                        (true, true),
-                    )));
-                }
-
-                // Skip types like State<...> and more, see the `extract` section in axum's docs
-                if matches!(
-                    ty_name.as_ref(),
-                    "State" | "Headers" | "Bytes" | "Request" | "Extension"
-                ) {
-                    return Ok(None);
-                }
-
-                match &segment.arguments {
-                    syn::PathArguments::None => {
-                        let is_basic = matches!(
-                            ty_name.as_str(),
-                            "bool"
-                                | "char"
-                                | "str"
-                                | "u8"
-                                | "u16"
-                                | "u32"
-                                | "u64"
-                                | "u128"
-                                | "i8"
-                                | "i16"
-                                | "i32"
-                                | "i64"
-                                | "i128"
-                                | "usize"
-                                | "isize"
-                                | "f32"
-                                | "f64"
-                                | "String"
-                        );
-                        return Ok(Some(RustType::new(
-                            is_basic,
-                            ty_name.clone(),
-                            ty_name,
-                            (false, false),
-                        )));
-                    }
-                    syn::PathArguments::AngleBracketed(ref args) => {
-                        if matches!(
-                            ty_name.as_str(),
-                            "Query" | "HashMap" | "Path" | "Vec" | "Json" | "Option" | "Result"
-                        ) {
-                            for arg in &args.args {
-                                if let syn::GenericArgument::Type(ref inner_ty) = arg {
-                                    if let Ok(Some(RustType {
-                                        is_basic,
-                                        outer_ty,
-                                        inner_ty,
-                                        is_generic,
-                                    })) = basic_rust_type(inner_ty, generics)
-                                    {
-                                        return Ok(Some(RustType::new(
-                                            is_basic,
-                                            format!("{}<{}>", ty_name, outer_ty),
-                                            inner_ty,
-                                            is_generic,
-                                        )));
-                                    }
-                                }
-                            }
-                        }
-
-                        let mut outer_ty = ty_name.clone();
-                        if let Some(generic_type) = args.args.get(0) {
-                            outer_ty = format!("{}<{}>", outer_ty, generic_type.to_token_stream());
-                        }
-
-                        return Ok(Some(RustType::new(false, outer_ty, ty_name, (true, false))));
-                    }
-                    _ => {}
-                }
+            #vis const fn metadata() -> gluer::FnInfo<'static> {
+                const FN_INFO: gluer::FnInfo<'static> = gluer::FnInfo {
+                    params: &[#(#params_types),*],
+                    response: #response,
+                    structs: &[#(#structs_quote),*]
+                };
+                FN_INFO
             }
         }
-        syn::Type::Reference(syn::TypeReference { elem, .. })
-        | syn::Type::Paren(syn::TypeParen { elem, .. })
-        | syn::Type::Group(syn::TypeGroup { elem, .. }) => return basic_rust_type(elem, generics),
-        syn::Type::Tuple(elems) => {
-            if elems.elems.len() == 1 {
-                return basic_rust_type(&elems.elems[0], generics);
-            } else if elems.elems.is_empty() {
-                return Ok(Some(RustType::new(
-                    true,
-                    "()".to_string(),
-                    "()".to_string(),
-                    (false, false),
-                )));
+    })
+}
+
+fn process_rust_type(rust_type: &RustType2, structs: &mut HashMap<String, Vec<RustType2>>) {
+    match rust_type {
+        RustType2::Custom(inner_ty) => {
+            structs.entry(inner_ty.clone()).or_insert_with(Vec::new);
+        }
+        RustType2::CustomGeneric(outer_ty, inner_tys) => {
+            structs
+                .entry(outer_ty.clone())
+                .or_insert_with(Vec::new)
+                .extend(inner_tys.clone());
+            for inner_ty in inner_tys {
+                process_rust_type(inner_ty, structs);
             }
         }
-        syn::Type::Array(syn::TypeArray { elem, .. })
-        | syn::Type::Slice(syn::TypeSlice { elem, .. }) => {
-            if let Some(RustType {
-                is_basic,
-                outer_ty,
-                inner_ty,
-                is_generic,
-            }) = basic_rust_type(elem, generics)?
-            {
-                let vec_type = format!("Vec<{}>", outer_ty);
-                return Ok(Some(RustType::new(
-                    is_basic, vec_type, inner_ty, is_generic,
-                )));
-            } else {
-                return Ok(None);
+        RustType2::Generic(_, inner_tys) => {
+            for inner_ty in inner_tys {
+                process_rust_type(inner_ty, structs);
             }
         }
         _ => {}
     }
-    Err(s_err(
-        proc_macro2::Span::call_site(),
-        format!("Failed to parse type {}", ty_str),
-    ))
+}
+fn generate_struct_metadata(
+    struct_name: &str,
+    generics_info: &Vec<RustType2>,
+) -> syn::Result<proc_macro2::TokenStream> {
+    let struct_ident = syn::Ident::new(struct_name, proc_macro2::Span::call_site());
+
+    let mut unique_generics = HashSet::new();
+    collect_unique_generics(generics_info, &mut unique_generics);
+
+    let generics_placeholder = unique_generics.iter().map(|_| quote! { () });
+
+    Ok(quote! {
+        #struct_ident::<#(#generics_placeholder),*>::metadata()
+    })
+}
+
+fn collect_unique_generics(generics_info: &Vec<RustType2>, unique_generics: &mut HashSet<String>) {
+    for generic in generics_info {
+        match generic {
+            RustType2::BuiltIn(_) => {}
+            RustType2::Custom(name) | RustType2::CustomGeneric(name, _) => {
+                unique_generics.insert(name.clone());
+            }
+            RustType2::Generic(_, inner_types) => {
+                collect_unique_generics(inner_types, unique_generics);
+            }
+        }
+    }
+}
+
+const RUST_TYPES: &[&str] = &[
+    "bool", "char", "str", "u8", "u16", "u32", "u64", "u128", "i8", "i16", "i32", "i64", "i128",
+    "usize", "isize", "f32", "f64", "String",
+];
+
+const SKIP_TYPES: &[&str] = &["State", "Headers", "Bytes", "Request", "Extension"];
+
+const BUILTIN_GENERICS: &[&str] = &[
+    "Query", "HashMap", "Path", "Vec", "Json", "Option", "Result",
+];
+
+#[derive(Debug, PartialEq, Clone)]
+enum RustType2 {
+    BuiltIn(String),
+    Generic(String, Vec<RustType2>),
+    Custom(String),
+    CustomGeneric(String, Vec<RustType2>),
+}
+
+impl RustType2 {
+    fn into_tokens(&self) -> TokenStream {
+        let mut tokens = TokenStream::new();
+        self.to_tokens(&mut tokens);
+        tokens
+    }
+}
+
+impl ToTokens for RustType2 {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        match self {
+            RustType2::BuiltIn(name) => {
+                let ty = syn::parse_str::<syn::Type>(&name).unwrap();
+                tokens.extend(quote! { #ty });
+            }
+            RustType2::Generic(name, inner) => {
+                let inner = inner.iter().map(|inner| {
+                    let ty = syn::parse_str::<syn::Type>(&inner.into_tokens().to_string()).unwrap();
+                    quote! { #ty }
+                });
+                let ty = syn::parse_str::<syn::Type>(&name).unwrap();
+                tokens.extend(quote! { #ty<#(#inner),*> });
+            }
+            RustType2::Custom(name) => {
+                let ty = syn::parse_str::<syn::Type>(&name).unwrap();
+                tokens.extend(quote! { #ty });
+            }
+            RustType2::CustomGeneric(name, inner) => {
+                let inner = inner.iter().map(|inner| {
+                    let ty = syn::parse_str::<syn::Type>(&inner.into_tokens().to_string()).unwrap();
+                    quote! { #ty }
+                });
+                let ty = syn::parse_str::<syn::Type>(&name).unwrap();
+                tokens.extend(quote! { #ty<#(#inner),*> });
+            }
+        }
+    }
+}
+
+fn is_builtin_type(ident: &syn::Ident) -> bool {
+    RUST_TYPES.contains(&ident.to_string().as_str())
+}
+
+fn is_skip_type(ident: &syn::Ident) -> bool {
+    SKIP_TYPES.contains(&ident.to_string().as_str())
+}
+
+fn check_rust_type(ty: &syn::Type) -> Option<RustType2> {
+    match ty {
+        syn::Type::Path(type_path) => {
+            let segment = type_path.path.segments.last().unwrap();
+            let ident = &segment.ident;
+
+            if is_builtin_type(ident) {
+                Some(RustType2::BuiltIn(ident.to_string()))
+            } else if is_skip_type(ident) {
+                None
+            } else if BUILTIN_GENERICS.contains(&ident.to_string().as_str()) {
+                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                    let inner_types: Vec<RustType2> = args
+                        .args
+                        .iter()
+                        .filter_map(|arg| {
+                            if let syn::GenericArgument::Type(inner_ty) = arg {
+                                check_rust_type(inner_ty)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    Some(RustType2::Generic(ident.to_string(), inner_types))
+                } else {
+                    Some(RustType2::Generic(ident.to_string(), vec![]))
+                }
+            } else if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                let inner_types: Vec<RustType2> = args
+                    .args
+                    .iter()
+                    .filter_map(|arg| {
+                        if let syn::GenericArgument::Type(inner_ty) = arg {
+                            check_rust_type(inner_ty)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                Some(RustType2::CustomGeneric(ident.to_string(), inner_types))
+            } else {
+                Some(RustType2::Custom(ident.to_string()))
+            }
+        }
+        syn::Type::Reference(syn::TypeReference { elem, .. })
+        | syn::Type::Paren(syn::TypeParen { elem, .. })
+        | syn::Type::Group(syn::TypeGroup { elem, .. }) => check_rust_type(&elem),
+        syn::Type::Slice(type_slice) => {
+            if let Some(inner) = check_rust_type(&type_slice.elem) {
+                Some(RustType2::Generic("Vec".to_string(), vec![inner]))
+            } else {
+                None
+            }
+        }
+        syn::Type::Tuple(type_tuple) => {
+            if type_tuple.elems.is_empty() {
+                return Some(RustType2::BuiltIn("()".to_string()));
+            }
+            let inner_types: Vec<RustType2> = type_tuple
+                .elems
+                .iter()
+                .filter_map(|inner_ty| check_rust_type(inner_ty))
+                .collect();
+            Some(RustType2::Generic("Tuple".to_string(), inner_types))
+        }
+        syn::Type::Array(type_array) => {
+            if let Some(inner) = check_rust_type(&type_array.elem) {
+                Some(RustType2::Generic("Vec".to_string(), vec![inner]))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
 }

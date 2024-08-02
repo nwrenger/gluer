@@ -31,6 +31,7 @@ Note: This crate is in an early stage and may not work in all cases. Please open
 - Generate a TypeScript file with:
   - Functions
   - Data types as Interfaces
+  - Generics, even multiple and nested ones, look for that [here](#complete-example)
 - Using no extra dependencies in the generated TypeScript file.
 
 ## How to use
@@ -39,8 +40,7 @@ Note: This crate is in an early stage and may not work in all cases. Please open
 
 ### Step 1: Define Structs and Functions
 
-Use the `#[metadata]` macro with the `#[meta(...)]` attribute to define your data structures and functions. This macro allows `gluer` to generate metadata for these structs and functions as `const` values with the same visibility as the function or struct. When splitting these into other modules, you need to import these `const` values, but they are recognized by Rust's compiler, so there is no need to worry about that.
-
+To define your data structures and functions, use the `#[metadata]` macro along with the `#[meta(...)] `attribute. This macro enables `gluer` to generate metadata for these structures and functions. It does so by implementing the `metadata` function on structs or by creating a struct that implements both the `metadata` function and the handler-specific function.
 ```rust
 use axum::{
     Json,
@@ -90,12 +90,12 @@ use axum::{
 };
 use gluer::{Api, extract, metadata};
 
-// done like above
-#[metadata]
+// without `#[metadata]`, it's non-API-important
 async fn root() -> String {
     "Hello, World!".to_string()
 }
 
+// done like above
 #[metadata]
 async fn hello() -> Json<String> {
     "Hello, World!".to_string().into()
@@ -112,7 +112,7 @@ let mut app: Api<()> = Api::new()
 
 Generate the API file using the `generate_client` function on the `Api` struct. This generates the TypeScript file.
 
-```rust
+```rust,no_run
 use gluer::Api;
 
 let app: Api<()> = Api::new();
@@ -157,33 +157,44 @@ async fn fetch_root(Query(test): Query<HashMap<String, String>>, Path(p): Path<u
     test.get(&p.to_string()).unwrap().clone()
 }
 
-// Generics are supported
+// Generics are supported, multiple even
 #[metadata]
 #[derive(Serialize, Deserialize, Default)]
-pub struct Hello<T: Serialize> {
-    name: String,
+pub struct Hello<T: Serialize, S> {
+    name: S,
     vec: Vec<T>,
 }
 
 #[metadata]
 #[derive(Serialize, Deserialize, Default)]
 struct Age {
-    #[meta(into = String)]
+    // #[meta(into = String)]
     age: AgeInner,
 }
 
+#[metadata]
 #[derive(Serialize, Deserialize, Default)]
 struct AgeInner {
     age: u8,
 }
 
 #[metadata]
-async fn add_root(Path(_): Path<usize>, Json(hello): Json<Hello<Age>>) -> Json<String> {
+#[derive(Serialize, Deserialize, Default)]
+struct Huh<T> {
+    huh: T,
+}
+
+// Even deep nested generics are supported
+#[metadata]
+async fn add_root(
+    Path(_): Path<usize>,
+    Json(hello): Json<Hello<Hello<Huh<Age>, String>, String>>,
+) -> Json<String> {
     Json(hello.name.to_string())
 }
 
-#[tokio::main]
-async fn main() {
+#[tokio::test]
+async fn main_test() {
     let app: Api<()> = Api::new().route("/:p", extract!(get(fetch_root).post(add_root)));
 
     app.generate_client("tests/api.ts").unwrap();
