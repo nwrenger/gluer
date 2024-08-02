@@ -66,13 +66,16 @@ where
         }
     }
 
-    /// Generate frontend TypeScript API client from the API routes. Specify the
-    /// desired `path`, where the file should be generated to and with what name,
-    /// and the `base` URL.
+    /// Generates a TypeScript API client for the frontend from the API routes.
     ///
-    /// Make sure to never end the `base` on a slash (`/`), resulting in for example
-    /// a `base` URL like this `""` for using `axum`'s static file hosting or a
-    /// `base` URL like `"http://localhost:8080"` for a local server.
+    /// ## Parameters
+    /// - `path`: Specifies the directory and filename where the generated file will be saved.
+    /// - `base`: Specifies the base URL for the API.
+    ///
+    /// ## Notes
+    /// Ensure that the `base` URL does not end with a slash (`/`). For example:
+    /// - Use `""` for no base URL if you are utilizing `axum`'s static file serving.
+    /// - Use `"http://localhost:8080"` for a local server.
     pub fn generate_client<P: AsRef<std::path::Path>>(&self, path: P, base: &'a str) -> Result<()> {
         let base = format!("const BASE = '{}';\n", base);
         let basic_functions = r#"    async function fetch_api(endpoint: string, options: RequestInit): Promise<any> {
