@@ -93,7 +93,8 @@ impl ToTokens for Route {
     }
 }
 
-/// Put before structs or functions to be usable by the `glue` crate.
+/// Put before structs or functions to generated metadata which will 
+/// be later used by the api via `extract!`.
 #[proc_macro_attribute]
 pub fn metadata(args: pc::TokenStream, input: pc::TokenStream) -> pc::TokenStream {
     match metadata_inner(args.into(), input.into()) {
