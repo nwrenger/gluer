@@ -1,6 +1,6 @@
 [package]
 name = "gluer"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 authors = ["Nils Wrenger <nils@wrenger.net>"]
 description = "A wrapper for Rust frameworks that eliminates redundant type and function definitions between the frontend and backend"
