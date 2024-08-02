@@ -29,14 +29,15 @@ Note: This crate is in an early stage and may not work in all cases. Please open
 - Convert Rust structs to TypeScript interfaces.
   - Via the `[#metadata]` attribute macro with the `#[meta(...)]` attribute
 - Generate a TypeScript file with:
-  - Functions
+  - Functions to access the api
+  - Supports a custom base URL
   - Data types as Interfaces
   - Generics, even multiple and nested ones, look for that [here](#complete-example)
 - Using no extra dependencies in the generated TypeScript file.
 
 ## How to use
 
-`gluer` generates an api endpoint `.ts` file which expects that you build your frontend statically and host it via `axum`'s static file serving. To use it, follow these steps:
+`gluer` generates an api endpoint `.ts` file. To use it, follow these steps:
 
 ### Step 1: Define Structs and Functions
 
@@ -111,14 +112,14 @@ let mut app: Api<()> = Api::new()
 
 ### Step 3: Generate API
 
-Generate the API file using the `generate_client` function on the `Api` struct. This generates the TypeScript file.
+Generate the API file using the `generate_client` function on the `Api` struct. This generates the TypeScript file. You can specify a different `base` and a path, where the file should be generated to and with what name.
 
 ```rust,no_run
 use gluer::Api;
 
 let app: Api<()> = Api::new();
 
-app.generate_client("tests/api.ts");
+app.generate_client("tests/api.ts", "");
 ```
 
 ### Step 4: Use the Wrapped Router
@@ -193,11 +194,11 @@ async fn add_root(
     Json(hello.name.to_string())
 }
 
-#[tokio::test]
-async fn main_test() {
+#[tokio::main]
+async fn main() {
     let app: Api<()> = Api::new().route("/:p", extract!(get(fetch_root).post(add_root)));
 
-    app.generate_client("tests/api.ts").unwrap();
+    app.generate_client("tests/api.ts", "").unwrap();
 
     let _listener = tokio::net::TcpListener::bind("127.0.0.1:8080")
         .await

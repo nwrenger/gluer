@@ -51,7 +51,7 @@ async fn add_root(
 async fn main_test() {
     let app: Api<()> = Api::new().route("/:p", extract!(get(fetch_root).post(add_root)));
 
-    app.generate_client("tests/api.ts").unwrap();
+    app.generate_client("tests/api.ts", "").unwrap();
 
     let _listener = tokio::net::TcpListener::bind("127.0.0.1:8080")
         .await

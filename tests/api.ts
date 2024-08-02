@@ -1,3 +1,5 @@
+const BASE = '';
+
 namespace api {
     export interface Age {
         age: string;
@@ -35,15 +37,15 @@ namespace api {
 		return '';
 	}
 
-    export async function add_root(path: number, data: Hello<Hello<Huh<Age>, Huh<string>>, string>): Promise<string> {
-        return fetch_api(`/${encodeURIComponent(path)}`, {
+    export async function add_root(path: number, data: Hello<Hello<Huh<Age>, string>, string>): Promise<string> {
+        return fetch_api(`${BASE}/${encodeURIComponent(path)}`, {
             method: "POST", 
             body: JSON.stringify(data)
         });
     }
 
     export async function fetch_root(queryMap: Record<string, string>, path: number): Promise<string> {
-        return fetch_api(`/${encodeURIComponent(path)}?${new URLSearchParams(queryMap).toString()}`, {
+        return fetch_api(`${BASE}/${encodeURIComponent(path)}?${new URLSearchParams(queryMap).toString()}`, {
             method: "GET", 
         });
     }

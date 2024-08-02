@@ -66,9 +66,16 @@ where
         }
     }
 
-    /// Generate frontend TypeScript API client from the API routes.
-    pub fn generate_client<P: AsRef<std::path::Path>>(&self, path: P) -> Result<()> {
-        let fetch_api_function = r#"    async function fetch_api(endpoint: string, options: RequestInit): Promise<any> {
+    /// Generate frontend TypeScript API client from the API routes. Specify the
+    /// desired `path`, where the file should be generated to and with what name,
+    /// and the `base` URL.
+    ///
+    /// Make sure to never end the `base` on a slash (`/`), resulting in for example
+    /// a `base` URL like this `""` for using `axum`'s static file hosting or a
+    /// `base` URL like `"http://localhost:8080"` for a local server.
+    pub fn generate_client<P: AsRef<std::path::Path>>(&self, path: P, base: &'a str) -> Result<()> {
+        let base = format!("const BASE = '{}';\n", base);
+        let basic_functions = r#"    async function fetch_api(endpoint: string, options: RequestInit): Promise<any> {
         const response = await fetch(endpoint, {
             headers: {
                 "Content-Type": "application/json",
@@ -124,7 +131,8 @@ where
 
         Self::write_to_file(
             path,
-            fetch_api_function,
+            base.as_str(),
+            basic_functions,
             namespace_start,
             namespace_end,
             ts_interfaces,
@@ -134,13 +142,17 @@ where
 
     fn write_to_file<P: AsRef<std::path::Path>>(
         path: P,
-        fetch_api_function: &str,
+        base: &str,
+        basic_functions: &str,
         namespace_start: &str,
         namespace_end: &str,
         ts_interfaces: BTreeMap<String, String>,
         ts_functions: BTreeMap<String, String>,
     ) -> Result<()> {
         let mut file = File::create(path)?;
+
+        file.write_all(base.as_bytes())?;
+        file.write_all(b"\n").unwrap();
 
         file.write_all(namespace_start.as_bytes())?;
 
@@ -149,7 +161,7 @@ where
             file.write_all(b"\n").unwrap();
         }
 
-        file.write_all(fetch_api_function.as_bytes())?;
+        file.write_all(basic_functions.as_bytes())?;
         file.write_all(b"\n").unwrap();
 
         for (i, function) in ts_functions.values().enumerate() {
@@ -246,7 +258,7 @@ impl<'a> Route<'a> {
 
         format!(
             r#"    export async function {fn_name}({params_str}): Promise<{response_type}> {{
-        return fetch_api(`{url}`, {{
+        return fetch_api(`${{BASE}}{url}`, {{
             method: "{method}", {body_assignment}
         }});
     }}
