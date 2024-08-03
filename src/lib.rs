@@ -9,7 +9,7 @@ use axum::Router;
 use error::{Error, Result};
 use std::{collections::BTreeMap, fs::File, io::Write};
 
-use crate::Type::{Json, Path, Query, QueryMap, Unknown};
+use crate::Type::{Json, Path, PathTuple, Query, QueryMap, Unknown};
 
 /// Wrapper around `axum::Router` that allows for generating TypeScript API clients.
 pub struct Api<'a, S = ()> {
@@ -203,6 +203,7 @@ impl<'a> Route<'a> {
             .filter_map(|ty| match ty {
                 Json(ty) => Some(format!("data: {}", ty)),
                 Path(ty) => Some(format!("path: {}", ty)),
+                PathTuple(ty) => Some(format!("pathTuple: {}", ty)),
                 Query(ty) => Some(format!("query: {}", ty)),
                 QueryMap(ty) => Some(format!("queryMap: Record{}", ty)),
                 Unknown(_) => None,
@@ -216,7 +217,21 @@ impl<'a> Route<'a> {
             ""
         };
 
-        if params_str.contains("path") {
+        if params_str.contains("pathTuple") {
+            let mut i = 0;
+            url = url
+                .split("/")
+                .map(|part| {
+                    if part.starts_with(":") {
+                        i += 1;
+                        format!("${{encodeURIComponent(pathTuple[{}])}}", i - 1)
+                    } else {
+                        part.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("/");
+        } else if params_str.contains("path") {
             url = url.split(":").next().unwrap().to_string();
             url += "${encodeURIComponent(path)}";
         }
@@ -313,6 +328,7 @@ enum Type<T> {
     Unknown(T),
     Json(T),
     Path(T),
+    PathTuple(T),
     Query(T),
     QueryMap(T),
 }
@@ -323,6 +339,7 @@ impl<T> Type<T> {
             Type::Unknown(t) => t,
             Type::Json(t) => t,
             Type::Path(t) => t,
+            Type::PathTuple(t) => t,
             Type::Query(t) => t,
             Type::QueryMap(t) => t,
         }
@@ -362,8 +379,11 @@ impl<T> Type<T> {
             }
             t if t.starts_with("Path<") => {
                 let inner_ty = &t[5..t.len() - 1];
-                let ty = Self::ty_to_ts(inner_ty, generics, interfaces, enum_types)?.unwrap();
-                Path(ty)
+                let ty = Self::ty_to_ts(inner_ty, generics, interfaces, enum_types)?;
+                match ty {
+                    PathTuple(ty) => PathTuple(ty),
+                    _ => Path(ty.unwrap()),
+                }
             }
             t if t.starts_with("Query<HashMap") => {
                 let inner_ty = &t[13..t.len() - 1];
@@ -390,6 +410,20 @@ impl<T> Type<T> {
             }
             t if t.starts_with("'static") => {
                 Self::ty_to_ts(&t[7..t.len()], generics, interfaces, enum_types)?
+            }
+            t if t.starts_with('(') && t.ends_with(')') => {
+                let inner_ty = &t[1..t.len() - 1];
+                let ty = inner_ty
+                    .split(',')
+                    .map(
+                        |t| match Self::ty_to_ts(t, generics, interfaces, enum_types) {
+                            Ok(t) => Ok(t.unwrap()),
+                            Err(e) => Err(e),
+                        },
+                    )
+                    .collect::<Result<Vec<_>>>()?
+                    .join(", ");
+                PathTuple(format!("[{}]", ty))
             }
             t if t.contains('<') && t.contains('>') => {
                 Self::parse_generic_type(t, generics, interfaces, enum_types)?

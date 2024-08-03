@@ -14,7 +14,7 @@ namespace api {
         huh: T;
     }
 
-    export type Enum = "A" | "B" | "C";
+    export type Alphabet = "A" | "B" | "C";
 
     async function fetch_api(endpoint: string, options: RequestInit): Promise<any> {
         const response = await fetch(endpoint, {
@@ -52,8 +52,8 @@ namespace api {
         });
     }
 
-    export async function get_enum(): Promise<Enum> {
-        return fetch_api(`${BASE}/`, {
+    export async function get_alphabet(pathTuple: [Alphabet, string]): Promise<[Alphabet, string]> {
+        return fetch_api(`${BASE}/char/${encodeURIComponent(pathTuple[0])}/metadata/${encodeURIComponent(pathTuple[1])}`, {
             method: "GET", 
         });
     }

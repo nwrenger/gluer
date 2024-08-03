@@ -49,22 +49,24 @@ async fn add_root(
 
 #[metadata]
 #[derive(Serialize, Deserialize)]
-enum Enum {
+enum Alphabet {
     A,
     B,
     C,
+    // etc
 }
 
+// Even tuples are supported
 #[metadata]
-async fn get_enum() -> Json<Enum> {
-    Json(Enum::A)
+async fn get_alphabet(Path(r): Path<(Alphabet, String)>) -> Json<(Alphabet, String)> {
+    Json(r)
 }
 
 #[tokio::test]
 async fn main_test() {
     let app: Api<()> = Api::new()
-        .route("/", extract!(get(get_enum)))
-        .route("/:p", extract!(get(fetch_root).post(add_root)));
+        .route("/:p", extract!(get(fetch_root).post(add_root)))
+        .route("/char/:path/metadata/:path", extract!(get(get_alphabet)));
 
     app.generate_client("tests/api.ts", "").unwrap();
 

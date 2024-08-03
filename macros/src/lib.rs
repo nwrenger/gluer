@@ -452,6 +452,11 @@ fn process_rust_type(rust_type: &RustType, structs: &mut HashMap<String, Vec<Rus
                 process_rust_type(inner_ty, structs);
             }
         }
+        RustType::Tuple(inner_tys) => {
+            for inner_ty in inner_tys {
+                process_rust_type(inner_ty, structs);
+            }
+        }
         RustType::Generic(_, inner_tys) => {
             for inner_ty in inner_tys {
                 process_rust_type(inner_ty, structs);
@@ -489,6 +494,7 @@ const BUILTIN_GENERICS: &[&str] = &[
 enum RustType {
     BuiltIn(String),
     Generic(String, Vec<RustType>),
+    Tuple(Vec<RustType>),
     Custom(String),
     CustomGeneric(String, Vec<RustType>),
 }
@@ -515,6 +521,13 @@ impl ToTokens for RustType {
                 });
                 let ty = syn::parse_str::<syn::Type>(name).unwrap();
                 tokens.extend(quote! { #ty<#(#inner),*> });
+            }
+            RustType::Tuple(inner) => {
+                let inner = inner.iter().map(|inner| {
+                    let ty = syn::parse_str::<syn::Type>(&inner.get_tokens().to_string()).unwrap();
+                    quote! { #ty }
+                });
+                tokens.extend(quote! { (#(#inner),*) });
             }
             RustType::Custom(name) => {
                 let ty = syn::parse_str::<syn::Type>(name).unwrap();
@@ -597,7 +610,7 @@ fn check_rust_type(ty: &syn::Type) -> Option<RustType> {
                 .iter()
                 .filter_map(check_rust_type)
                 .collect();
-            Some(RustType::Generic("Tuple".to_string(), inner_types))
+            Some(RustType::Tuple(inner_types))
         }
         syn::Type::Slice(syn::TypeSlice { elem, .. })
         | syn::Type::Array(syn::TypeArray { elem, .. }) => {

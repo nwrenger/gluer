@@ -33,6 +33,7 @@ Note: This crate is in an early stage and may not work in all cases. Please open
   - Supports a custom base URL
   - Structs as Interfaces
   - Enums as Types, enums with values are not supported, because of the lack of that feature in TypeScript
+  - Tuples as the TypeScript equivalent, also supports tuples in `axum`'s path 
   - Generics, even multiple and nested ones, look for that [here](#complete-example)
 - Using no extra dependencies in the generated TypeScript file.
 
@@ -46,12 +47,14 @@ To define your structs, functions and enums, use the `#[metadata]` macro along w
 ```rust
 use axum::{
     Json,
+    extract::Path,
 };
 use gluer::metadata;
+use serde::{Serialize, Deserialize};
 
 // Define a struct with the metadata macro
 #[metadata]
-#[derive(Default, serde::Serialize)]
+#[derive(Default, Serialize, Deserialize)]
 struct Book {
     name: String,
     // Sometimes you don't have access to certain data types, 
@@ -63,7 +66,7 @@ struct Book {
     borrower: User,
 }
 
-#[derive(Default, serde::Serialize)]
+#[derive(Default, Serialize, Deserialize)]
 struct User {
     name: String,
     password: String,
@@ -72,7 +75,7 @@ struct User {
 // Define an enum with the metadata macro
 // Note: Enums with values are not supported
 #[metadata]
-#[derive(Default, serde::Serialize)]
+#[derive(Default, Serialize, Deserialize)]
 enum BookState {
     #[default]
     None,
@@ -86,11 +89,19 @@ async fn root() -> Json<String> {
     "Hello, World!".to_string().into()
 }
 
+// Supports axum's input types
 #[metadata]
-async fn book() -> Json<Book> {
-    Book::default().into()
+async fn book(Json(b): Json<Book>) -> Json<Book> {
+    Json(b)
 }
 
+// Also tuples in paths
+#[metadata]
+async fn path(Path(p): Path<(String, String)>) -> Json<(String, String)> {
+    p.into()
+}
+
+// Supports enums 
 #[metadata]
 async fn book_state() -> Json<BookState> {
     BookState::default().into()
@@ -105,6 +116,7 @@ Use the `Api` wrapper around `axum`'s Router to add routes. Utilize the `extract
 use axum::{
     routing::get,
     Json,
+    extract::Path,
 };
 use gluer::{Api, extract, metadata};
 
@@ -115,8 +127,8 @@ async fn root() -> String {
 
 // done like above
 #[metadata]
-async fn hello() -> Json<String> {
-    "Hello, World!".to_string().into()
+async fn hello(Path(h): Path<String>) -> Json<String> {
+    h.into()
 }
 
 let mut app: Api<()> = Api::new()
@@ -124,7 +136,7 @@ let mut app: Api<()> = Api::new()
     // accessing axum's Router directly via inner_router
     .inner_router(|f| f.route("/", get(root)))
     // Add API-important routes with the route function
-    .route("/hello-world", extract!(get(hello)));
+    .route("/:hello", extract!(get(hello)));
 ```
 
 ### Step 3: Generate API
@@ -213,22 +225,24 @@ async fn add_root(
 
 #[metadata]
 #[derive(Serialize, Deserialize)]
-enum Enum {
+enum Alphabet {
     A,
     B,
     C,
+    // etc
 }
 
+// Even tuples are supported
 #[metadata]
-async fn get_enum() -> Json<Enum> {
-    Json(Enum::A)
+async fn get_alphabet(Path(r): Path<(Alphabet, String)>) -> Json<(Alphabet, String)> {
+    Json(r)
 }
 
 #[tokio::test]
 async fn main_test() {
     let app: Api<()> = Api::new()
-        .route("/", extract!(get(get_enum)))
-        .route("/:p", extract!(get(fetch_root).post(add_root)));
+        .route("/:p", extract!(get(fetch_root).post(add_root)))
+        .route("/char/:path/metadata/:path", extract!(get(get_alphabet)));
 
     app.generate_client("tests/api.ts", "").unwrap();
 
