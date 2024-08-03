@@ -104,80 +104,45 @@ where
         let namespace_start = "namespace api {\n";
         let namespace_end = "}\n\nexport default api;";
 
-        let mut ts_functions = BTreeMap::new();
-        let mut ts_interfaces: BTreeMap<String, String> = BTreeMap::new();
+        let mut parsed_ts =
+            ParsedTypeScript::new(&base, basic_functions, namespace_start, namespace_end);
 
         for route in &self.api_routes {
-            Route::resolving_dependencies(route.fn_info.structs, &mut ts_interfaces)?;
+            Route::resolving_dependencies(
+                route.fn_info.structs,
+                &mut parsed_ts.interfaces,
+                &mut parsed_ts.enum_types,
+            )?;
 
             let params_type = route
                 .fn_info
                 .params
                 .iter()
-                .map(|Field { name: _, ty }| Type::<String>::ty_to_ts(ty, &[], &ts_interfaces))
+                .map(|Field { name: _, ty }| {
+                    Type::<String>::ty_to_ts(ty, &[], &parsed_ts.interfaces, &parsed_ts.enum_types)
+                })
                 .collect::<Result<Vec<_>>>()?;
-            let response_type =
-                Type::<String>::ty_to_ts(route.fn_info.response, &[], &ts_interfaces)?;
+            let response_type = Type::<String>::ty_to_ts(
+                route.fn_info.response,
+                &[],
+                &parsed_ts.interfaces,
+                &parsed_ts.enum_types,
+            )?;
 
-            if ts_functions.contains_key(route.fn_name) {
+            if parsed_ts.functions.contains_key(route.fn_name) {
                 return Err(Error::Ts(format!(
                     "Function with name '{}' already exists",
                     route.fn_name,
                 )));
             } else {
-                ts_functions.insert(
+                parsed_ts.functions.insert(
                     route.fn_name.to_string(),
                     route.generate_ts_function(params_type, response_type),
                 );
             }
         }
 
-        Self::write_to_file(
-            path,
-            base.as_str(),
-            basic_functions,
-            namespace_start,
-            namespace_end,
-            ts_interfaces,
-            ts_functions,
-        )
-    }
-
-    fn write_to_file<P: AsRef<std::path::Path>>(
-        path: P,
-        base: &str,
-        basic_functions: &str,
-        namespace_start: &str,
-        namespace_end: &str,
-        ts_interfaces: BTreeMap<String, String>,
-        ts_functions: BTreeMap<String, String>,
-    ) -> Result<()> {
-        let mut file = File::create(path)?;
-
-        file.write_all(base.as_bytes())?;
-        file.write_all(b"\n").unwrap();
-
-        file.write_all(namespace_start.as_bytes())?;
-
-        for interface in ts_interfaces.values() {
-            file.write_all(interface.as_bytes())?;
-            file.write_all(b"\n").unwrap();
-        }
-
-        file.write_all(basic_functions.as_bytes())?;
-        file.write_all(b"\n").unwrap();
-
-        for (i, function) in ts_functions.values().enumerate() {
-            file.write_all(function.as_bytes())?;
-            if ts_functions.len() - 1 > i {
-                file.write_all(b"\n").unwrap();
-            }
-        }
-
-        file.write_all(namespace_end.as_bytes())?;
-        file.write_all(b"\n").unwrap();
-
-        Ok(())
+        parsed_ts.write_to_file(path)
     }
 
     /// Convert into an `axum::Router`.
@@ -206,17 +171,21 @@ pub struct Route<'a> {
 
 impl<'a> Route<'a> {
     fn resolving_dependencies(
-        dependencies: &[StructInfo],
-        ts_interfaces: &mut BTreeMap<String, String>,
+        dependencies: &[TypeInfo],
+        interfaces: &mut BTreeMap<String, String>,
+        enum_types: &mut BTreeMap<String, String>,
     ) -> Result<()> {
-        for struct_info in dependencies {
-            Self::resolving_dependencies(struct_info.dependencies, ts_interfaces)?;
-            if !ts_interfaces.contains_key(&struct_info.name.to_string()) {
-                let ts_interfaces_clone = ts_interfaces.clone();
-                ts_interfaces.insert(
-                    struct_info.name.to_string(),
-                    struct_info.generate_ts_interface(&ts_interfaces_clone)?,
-                );
+        for type_info in dependencies {
+            Self::resolving_dependencies(type_info.dependencies, interfaces, enum_types)?;
+            if !interfaces.contains_key(&type_info.name.to_string()) {
+                if type_info.is_enum {
+                    enum_types.insert(type_info.name.to_string(), type_info.generate_enum_type()?);
+                } else {
+                    interfaces.insert(
+                        type_info.name.to_string(),
+                        type_info.generate_interface(interfaces, enum_types)?,
+                    );
+                }
             }
         }
         Ok(())
@@ -281,20 +250,25 @@ impl<'a> Route<'a> {
 pub struct FnInfo<'a> {
     pub params: &'a [Field<'a>],
     pub response: &'a str,
-    pub structs: &'a [StructInfo<'a>],
+    pub structs: &'a [TypeInfo<'a>],
 }
 
 /// Struct information.
 #[derive(Clone, Debug)]
-pub struct StructInfo<'a> {
+pub struct TypeInfo<'a> {
     pub name: &'a str,
     pub generics: &'a [&'a str],
     pub fields: &'a [Field<'a>],
-    pub dependencies: &'a [StructInfo<'a>],
+    pub dependencies: &'a [TypeInfo<'a>],
+    pub is_enum: bool,
 }
 
-impl<'a> StructInfo<'a> {
-    fn generate_ts_interface(&self, ts_interfaces: &BTreeMap<String, String>) -> Result<String> {
+impl<'a> TypeInfo<'a> {
+    fn generate_interface(
+        &self,
+        interfaces: &BTreeMap<String, String>,
+        enum_types: &BTreeMap<String, String>,
+    ) -> Result<String> {
         let generics_str = if self.generics.is_empty() {
             "".to_string()
         } else {
@@ -302,11 +276,28 @@ impl<'a> StructInfo<'a> {
         };
         let mut interface = format!("    export interface {}{} {{\n", self.name, generics_str);
         for Field { name, ty } in self.fields {
-            let ty = Type::<String>::ty_to_ts(ty, self.generics, ts_interfaces)?;
+            let ty = Type::<String>::ty_to_ts(ty, self.generics, interfaces, enum_types)?;
             interface.push_str(&format!("        {}: {};\n", name, ty.unwrap()));
         }
         interface.push_str("    }\n");
         Ok(interface)
+    }
+
+    fn generate_enum_type(&self) -> Result<String> {
+        let mut enum_type = format!("    export type {} = ", self.name);
+        for (i, field) in self.fields.iter().enumerate() {
+            enum_type.push_str(&format!(
+                "\"{}\"{}",
+                field.name,
+                if i == self.fields.len() - 1 {
+                    ";"
+                } else {
+                    " | "
+                }
+            ));
+        }
+        enum_type.push('\n');
+        Ok(enum_type)
     }
 }
 
@@ -340,10 +331,11 @@ impl<T> Type<T> {
     fn ty_to_ts<'a>(
         ty: &'a str,
         generics: &[&str],
-        ts_interfaces: &'a BTreeMap<String, String>,
+        interfaces: &'a BTreeMap<String, String>,
+        enum_types: &'a BTreeMap<String, String>,
     ) -> Result<Type<String>> {
         let ty = ty.trim().replace(" ", "");
-        if ts_interfaces.contains_key(ty.as_str()) {
+        if interfaces.contains_key(ty.as_str()) || enum_types.contains_key(ty.as_str()) {
             return Ok(Unknown(ty.to_string()));
         }
 
@@ -355,50 +347,52 @@ impl<T> Type<T> {
             "()" => Unknown(String::from("void")),
             t if t.starts_with("Vec<") => {
                 let inner_ty = &t[4..t.len() - 1];
-                let ty = Self::ty_to_ts(inner_ty, generics, ts_interfaces)?.unwrap();
+                let ty = Self::ty_to_ts(inner_ty, generics, interfaces, enum_types)?.unwrap();
                 Unknown(format!("{}[]", ty))
             }
             t if t.starts_with("Html<") => {
                 let inner_ty = &t[5..t.len() - 1];
-                let ty = Self::ty_to_ts(inner_ty, generics, ts_interfaces)?.unwrap();
+                let ty = Self::ty_to_ts(inner_ty, generics, interfaces, enum_types)?.unwrap();
                 Unknown(ty)
             }
             t if t.starts_with("Json<") => {
                 let inner_ty = &t[5..t.len() - 1];
-                let ty = Self::ty_to_ts(inner_ty, generics, ts_interfaces)?.unwrap();
+                let ty = Self::ty_to_ts(inner_ty, generics, interfaces, enum_types)?.unwrap();
                 Json(ty)
             }
             t if t.starts_with("Path<") => {
                 let inner_ty = &t[5..t.len() - 1];
-                let ty = Self::ty_to_ts(inner_ty, generics, ts_interfaces)?.unwrap();
+                let ty = Self::ty_to_ts(inner_ty, generics, interfaces, enum_types)?.unwrap();
                 Path(ty)
             }
             t if t.starts_with("Query<HashMap") => {
                 let inner_ty = &t[13..t.len() - 1];
-                let ty = Self::ty_to_ts(inner_ty, generics, ts_interfaces)?.unwrap();
+                let ty = Self::ty_to_ts(inner_ty, generics, interfaces, enum_types)?.unwrap();
                 QueryMap(ty)
             }
             t if t.starts_with("Query<") => {
                 let inner_ty = &t[6..t.len() - 1];
-                let ty = Self::ty_to_ts(inner_ty, generics, ts_interfaces)?.unwrap();
+                let ty = Self::ty_to_ts(inner_ty, generics, interfaces, enum_types)?.unwrap();
                 Query(ty)
             }
             t if t.starts_with("Result<") => {
                 let inner_ty = &t[7..t.len() - 1];
-                let ty = Self::ty_to_ts(inner_ty, generics, ts_interfaces)?.unwrap();
+                let ty = Self::ty_to_ts(inner_ty, generics, interfaces, enum_types)?.unwrap();
                 Unknown(format!("{} | any", ty))
             }
             t if t.starts_with("Option<") => {
                 let inner_ty = &t[7..t.len() - 1];
-                let ty = Self::ty_to_ts(inner_ty, generics, ts_interfaces)?.unwrap();
+                let ty = Self::ty_to_ts(inner_ty, generics, interfaces, enum_types)?.unwrap();
                 Unknown(format!("{} | null", ty))
             }
-            t if t.starts_with("&") => Self::ty_to_ts(&t[1..t.len()], generics, ts_interfaces)?,
+            t if t.starts_with("&") => {
+                Self::ty_to_ts(&t[1..t.len()], generics, interfaces, enum_types)?
+            }
             t if t.starts_with("'static") => {
-                Self::ty_to_ts(&t[7..t.len()], generics, ts_interfaces)?
+                Self::ty_to_ts(&t[7..t.len()], generics, interfaces, enum_types)?
             }
             t if t.contains('<') && t.contains('>') => {
-                Self::parse_generic_type(t, generics, ts_interfaces)?
+                Self::parse_generic_type(t, generics, interfaces, enum_types)?
             }
             t => {
                 if let Some(t) = generics.iter().find(|p| **p == t) {
@@ -416,7 +410,8 @@ impl<T> Type<T> {
     fn parse_generic_type<'a>(
         t: &'a str,
         generics: &[&str],
-        ts_interfaces: &'a BTreeMap<String, String>,
+        interfaces: &'a BTreeMap<String, String>,
+        enum_types: &'a BTreeMap<String, String>,
     ) -> Result<Type<String>> {
         let mut base_ty = String::new();
         let mut generic_params = String::new();
@@ -467,7 +462,7 @@ impl<T> Type<T> {
 
         let generic_ts = params
             .into_iter()
-            .map(|param| Self::ty_to_ts(&param, generics, ts_interfaces))
+            .map(|param| Self::ty_to_ts(&param, generics, interfaces, enum_types))
             .collect::<Result<Vec<_>>>()?
             .into_iter()
             .map(|t| t.unwrap())
@@ -475,5 +470,68 @@ impl<T> Type<T> {
             .join(", ");
 
         Ok(Unknown(format!("{}<{}>", base_ty, generic_ts)))
+    }
+}
+
+struct ParsedTypeScript<'a> {
+    base: &'a str,
+    basic_functions: &'a str,
+    namespace_start: &'a str,
+    namespace_end: &'a str,
+    interfaces: BTreeMap<String, String>,
+    functions: BTreeMap<String, String>,
+    enum_types: BTreeMap<String, String>,
+}
+
+impl<'a> ParsedTypeScript<'a> {
+    fn new(
+        base: &'a str,
+        basic_functions: &'a str,
+        namespace_start: &'a str,
+        namespace_end: &'a str,
+    ) -> Self {
+        Self {
+            base,
+            basic_functions,
+            namespace_start,
+            namespace_end,
+            interfaces: BTreeMap::new(),
+            functions: BTreeMap::new(),
+            enum_types: BTreeMap::new(),
+        }
+    }
+
+    fn write_to_file<P: AsRef<std::path::Path>>(&self, path: P) -> Result<()> {
+        let mut file = File::create(path)?;
+
+        file.write_all(self.base.as_bytes())?;
+        file.write_all(b"\n").unwrap();
+
+        file.write_all(self.namespace_start.as_bytes())?;
+
+        for interface in self.interfaces.values() {
+            file.write_all(interface.as_bytes())?;
+            file.write_all(b"\n").unwrap();
+        }
+
+        for enum_type in self.enum_types.values() {
+            file.write_all(enum_type.as_bytes())?;
+            file.write_all(b"\n").unwrap();
+        }
+
+        file.write_all(self.basic_functions.as_bytes())?;
+        file.write_all(b"\n").unwrap();
+
+        for (i, function) in self.functions.values().enumerate() {
+            file.write_all(function.as_bytes())?;
+            if self.functions.len() - 1 > i {
+                file.write_all(b"\n").unwrap();
+            }
+        }
+
+        file.write_all(self.namespace_end.as_bytes())?;
+        file.write_all(b"\n").unwrap();
+
+        Ok(())
     }
 }

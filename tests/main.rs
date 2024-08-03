@@ -42,14 +42,29 @@ struct Huh<T> {
 #[metadata]
 async fn add_root(
     Path(_): Path<usize>,
-    Json(hello): Json<Hello<Hello<Huh<Age>, String>, String>>,
+    Json(hello): Json<Hello<Hello<Huh<Huh<Hello<Age, String>>>, String>, String>>,
 ) -> Json<String> {
     Json(hello.name.to_string())
 }
 
+#[metadata]
+#[derive(Serialize, Deserialize)]
+enum Enum {
+    A,
+    B,
+    C,
+}
+
+#[metadata]
+async fn get_enum() -> Json<Enum> {
+    Json(Enum::A)
+}
+
 #[tokio::test]
 async fn main_test() {
-    let app: Api<()> = Api::new().route("/:p", extract!(get(fetch_root).post(add_root)));
+    let app: Api<()> = Api::new()
+        .route("/", extract!(get(get_enum)))
+        .route("/:p", extract!(get(fetch_root).post(add_root)));
 
     app.generate_client("tests/api.ts", "").unwrap();
 

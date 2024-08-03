@@ -1,10 +1,7 @@
 use proc_macro::{self as pc};
 use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
-use std::{
-    collections::{HashMap, HashSet},
-    fmt, vec,
-};
+use std::{collections::HashMap, fmt, vec};
 use syn::{parenthesized, parse::Parse, spanned::Spanned, TypeParam};
 
 fn s_err(span: proc_macro2::Span, msg: impl fmt::Display) -> syn::Error {
@@ -93,8 +90,8 @@ impl ToTokens for Route {
     }
 }
 
-/// Put before structs or functions to generated metadata which will 
-/// be later used by the api via `extract!`.
+/// Put before structs, functions or enums to generated metadata
+/// which will be later used by the api via `extract!`.
 #[proc_macro_attribute]
 pub fn metadata(args: pc::TokenStream, input: pc::TokenStream) -> pc::TokenStream {
     match metadata_inner(args.into(), input.into()) {
@@ -110,8 +107,9 @@ fn metadata_inner(args: TokenStream, input: TokenStream) -> syn::Result<TokenStr
 
     let out = match item {
         syn::Item::Struct(item_struct) => generate_struct(item_struct)?,
+        syn::Item::Enum(item_enum) => generate_enum(item_enum)?,
         syn::Item::Fn(item_fn) => generate_function(item_fn)?,
-        _ => return Err(s_err(span, "Expected struct or function")),
+        _ => return Err(s_err(span, "Expected struct, function or enum")),
     };
 
     Ok(quote! {
@@ -194,7 +192,7 @@ fn generate_struct(mut item_struct: syn::ItemStruct) -> syn::Result<TokenStream>
             }
 
             if into.is_none() {
-                let _ = match check(&field.ty, field.span(), &mut dependencies, &generics) {
+                match check(&field.ty, field.span(), &mut dependencies, &generics) {
                     Ok(_) => {}
                     Err(e) => return Some(Err(e)),
                 };
@@ -205,17 +203,17 @@ fn generate_struct(mut item_struct: syn::ItemStruct) -> syn::Result<TokenStream>
                     generics: &Vec<String>,
                 ) -> syn::Result<()> {
                     match check_rust_type(ty) {
-                        Some(RustType2::Custom(inner_ty))
-                        | Some(RustType2::CustomGeneric(inner_ty, _)) => {
+                        Some(RustType::Custom(inner_ty))
+                        | Some(RustType::CustomGeneric(inner_ty, _)) => {
                             if !dependencies.contains(&inner_ty) && !generics.contains(&inner_ty) {
                                 dependencies.push(inner_ty);
                             }
                         }
 
-                        Some(RustType2::Generic(_, inner_tys)) => {
+                        Some(RustType::Generic(_, inner_tys)) => {
                             for inner in inner_tys {
                                 let ty =
-                                    syn::parse_str::<syn::Type>(&inner.into_tokens().to_string())?;
+                                    syn::parse_str::<syn::Type>(&inner.get_tokens().to_string())?;
                                 check(&ty, span, dependencies, generics)?;
                             }
                         }
@@ -250,20 +248,20 @@ fn generate_struct(mut item_struct: syn::ItemStruct) -> syn::Result<TokenStream>
         #item_struct
 
         impl #generics_ident #struct_name_ident #generics_ident_no_types {
-            #vis const fn metadata() -> gluer::StructInfo<'static> {
-                const STRUCT_INFO: gluer::StructInfo<'static> = gluer::StructInfo {
+            #vis const fn metadata() -> gluer::TypeInfo<'static> {
+                const TYPE_INFO: gluer::TypeInfo<'static> = gluer::TypeInfo {
                     name: #struct_name,
                     generics: &[#(#generics_quote),*],
                     fields: &[#(#const_value),*],
-                    dependencies: &[#(#dependencies_quote),*]
+                    dependencies: &[#(#dependencies_quote),*],
+                    is_enum: false,
                 };
-                STRUCT_INFO
+                TYPE_INFO
             }
         }
     })
 }
 
-// Function to extract type parameters and convert them into a syn::Type
 fn extract_type_params_as_type(generics: &syn::Generics) -> syn::Result<Option<syn::Generics>> {
     let type_params: Vec<String> = generics
         .type_params()
@@ -315,6 +313,53 @@ fn parse_field_attr(attrs: &[syn::Attribute]) -> syn::Result<MetaAttr> {
     Ok(meta_attr)
 }
 
+fn generate_enum(item_enum: syn::ItemEnum) -> syn::Result<TokenStream> {
+    if !item_enum.generics.params.is_empty() {
+        return Err(syn::Error::new(
+            item_enum.generics.span(),
+            "Generics and Lifetimes not supported for enums",
+        ));
+    }
+
+    let enum_name_ident = item_enum.ident.clone();
+    let enum_name = enum_name_ident.to_string();
+    let vis = &item_enum.vis;
+
+    let variants = item_enum
+        .variants
+        .iter()
+        .map(|variant| {
+            if !variant.fields.is_empty() {
+                return Err(syn::Error::new(
+                    variant.fields.span(),
+                    "Enums with values are not supported",
+                ));
+            }
+            let ident = variant.ident.to_string();
+            Ok(quote! {gluer::Field { name: #ident, ty: "" }})
+        })
+        .collect::<syn::Result<Vec<_>>>()?;
+
+    let item_enum = quote! { #item_enum };
+
+    Ok(quote! {
+        #item_enum
+
+        impl #enum_name_ident {
+            #vis const fn metadata() -> gluer::TypeInfo<'static> {
+                const TYPE_INFO: gluer::TypeInfo<'static> = gluer::TypeInfo {
+                    name: #enum_name,
+                    generics: &[],
+                    fields: &[#(#variants),*],
+                    dependencies: &[],
+                    is_enum: true,
+                };
+                TYPE_INFO
+            }
+        }
+    })
+}
+
 fn generate_function(item_fn: syn::ItemFn) -> syn::Result<proc_macro2::TokenStream> {
     let fn_name_ident = item_fn.sig.ident.clone();
     let vis = &item_fn.vis;
@@ -352,7 +397,7 @@ fn generate_function(item_fn: syn::ItemFn) -> syn::Result<proc_macro2::TokenStre
                 return Err(syn::Error::new(ty.span(), "Unsupported return type"));
             }
         }
-        syn::ReturnType::Default => RustType2::BuiltIn("()".to_string()),
+        syn::ReturnType::Default => RustType::BuiltIn("()".to_string()),
     };
 
     let params_types = params.iter().map(|(pat, ty)| {
@@ -367,9 +412,7 @@ fn generate_function(item_fn: syn::ItemFn) -> syn::Result<proc_macro2::TokenStre
 
     let structs_quote = structs
         .iter()
-        .map(|(struct_name, generics_info)| {
-            generate_struct_metadata(struct_name, generics_info).map_err(|e| e.into())
-        })
+        .map(|(struct_name, generics_info)| generate_struct_metadata(struct_name, generics_info))
         .collect::<Result<Vec<_>, syn::Error>>()?;
 
     Ok(quote! {
@@ -391,21 +434,25 @@ fn generate_function(item_fn: syn::ItemFn) -> syn::Result<proc_macro2::TokenStre
     })
 }
 
-fn process_rust_type(rust_type: &RustType2, structs: &mut HashMap<String, Vec<RustType2>>) {
+fn process_rust_type(rust_type: &RustType, structs: &mut HashMap<String, Vec<RustType>>) {
     match rust_type {
-        RustType2::Custom(inner_ty) => {
-            structs.entry(inner_ty.clone()).or_insert_with(Vec::new);
+        RustType::Custom(inner_ty) => {
+            if !structs.contains_key(inner_ty) {
+                structs.entry(inner_ty.clone()).or_default();
+            }
         }
-        RustType2::CustomGeneric(outer_ty, inner_tys) => {
-            structs
-                .entry(outer_ty.clone())
-                .or_insert_with(Vec::new)
-                .extend(inner_tys.clone());
+        RustType::CustomGeneric(outer_ty, inner_tys) => {
+            if !structs.contains_key(outer_ty) {
+                structs
+                    .entry(outer_ty.clone())
+                    .or_default()
+                    .extend(inner_tys.clone());
+            }
             for inner_ty in inner_tys {
                 process_rust_type(inner_ty, structs);
             }
         }
-        RustType2::Generic(_, inner_tys) => {
+        RustType::Generic(_, inner_tys) => {
             for inner_ty in inner_tys {
                 process_rust_type(inner_ty, structs);
             }
@@ -415,32 +462,16 @@ fn process_rust_type(rust_type: &RustType2, structs: &mut HashMap<String, Vec<Ru
 }
 fn generate_struct_metadata(
     struct_name: &str,
-    generics_info: &Vec<RustType2>,
+    generics_info: &[RustType],
 ) -> syn::Result<proc_macro2::TokenStream> {
     let struct_ident = syn::Ident::new(struct_name, proc_macro2::Span::call_site());
 
-    let mut unique_generics = HashSet::new();
-    collect_unique_generics(generics_info, &mut unique_generics);
-
-    let generics_placeholder = unique_generics.iter().map(|_| quote! { () });
+    let times = generics_info.len();
+    let generics_placeholder = (0..times).map(|_| quote! { () });
 
     Ok(quote! {
         #struct_ident::<#(#generics_placeholder),*>::metadata()
     })
-}
-
-fn collect_unique_generics(generics_info: &Vec<RustType2>, unique_generics: &mut HashSet<String>) {
-    for generic in generics_info {
-        match generic {
-            RustType2::BuiltIn(_) => {}
-            RustType2::Custom(name) | RustType2::CustomGeneric(name, _) => {
-                unique_generics.insert(name.clone());
-            }
-            RustType2::Generic(_, inner_types) => {
-                collect_unique_generics(inner_types, unique_generics);
-            }
-        }
-    }
 }
 
 const RUST_TYPES: &[&str] = &[
@@ -455,46 +486,46 @@ const BUILTIN_GENERICS: &[&str] = &[
 ];
 
 #[derive(Debug, PartialEq, Clone)]
-enum RustType2 {
+enum RustType {
     BuiltIn(String),
-    Generic(String, Vec<RustType2>),
+    Generic(String, Vec<RustType>),
     Custom(String),
-    CustomGeneric(String, Vec<RustType2>),
+    CustomGeneric(String, Vec<RustType>),
 }
 
-impl RustType2 {
-    fn into_tokens(&self) -> TokenStream {
+impl RustType {
+    fn get_tokens(&self) -> TokenStream {
         let mut tokens = TokenStream::new();
         self.to_tokens(&mut tokens);
         tokens
     }
 }
 
-impl ToTokens for RustType2 {
+impl ToTokens for RustType {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         match self {
-            RustType2::BuiltIn(name) => {
-                let ty = syn::parse_str::<syn::Type>(&name).unwrap();
+            RustType::BuiltIn(name) => {
+                let ty = syn::parse_str::<syn::Type>(name).unwrap();
                 tokens.extend(quote! { #ty });
             }
-            RustType2::Generic(name, inner) => {
+            RustType::Generic(name, inner) => {
                 let inner = inner.iter().map(|inner| {
-                    let ty = syn::parse_str::<syn::Type>(&inner.into_tokens().to_string()).unwrap();
+                    let ty = syn::parse_str::<syn::Type>(&inner.get_tokens().to_string()).unwrap();
                     quote! { #ty }
                 });
-                let ty = syn::parse_str::<syn::Type>(&name).unwrap();
+                let ty = syn::parse_str::<syn::Type>(name).unwrap();
                 tokens.extend(quote! { #ty<#(#inner),*> });
             }
-            RustType2::Custom(name) => {
-                let ty = syn::parse_str::<syn::Type>(&name).unwrap();
+            RustType::Custom(name) => {
+                let ty = syn::parse_str::<syn::Type>(name).unwrap();
                 tokens.extend(quote! { #ty });
             }
-            RustType2::CustomGeneric(name, inner) => {
+            RustType::CustomGeneric(name, inner) => {
                 let inner = inner.iter().map(|inner| {
-                    let ty = syn::parse_str::<syn::Type>(&inner.into_tokens().to_string()).unwrap();
+                    let ty = syn::parse_str::<syn::Type>(&inner.get_tokens().to_string()).unwrap();
                     quote! { #ty }
                 });
-                let ty = syn::parse_str::<syn::Type>(&name).unwrap();
+                let ty = syn::parse_str::<syn::Type>(name).unwrap();
                 tokens.extend(quote! { #ty<#(#inner),*> });
             }
         }
@@ -509,19 +540,19 @@ fn is_skip_type(ident: &syn::Ident) -> bool {
     SKIP_TYPES.contains(&ident.to_string().as_str())
 }
 
-fn check_rust_type(ty: &syn::Type) -> Option<RustType2> {
+fn check_rust_type(ty: &syn::Type) -> Option<RustType> {
     match ty {
         syn::Type::Path(type_path) => {
             let segment = type_path.path.segments.last().unwrap();
             let ident = &segment.ident;
 
             if is_builtin_type(ident) {
-                Some(RustType2::BuiltIn(ident.to_string()))
+                Some(RustType::BuiltIn(ident.to_string()))
             } else if is_skip_type(ident) {
                 None
             } else if BUILTIN_GENERICS.contains(&ident.to_string().as_str()) {
                 if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                    let inner_types: Vec<RustType2> = args
+                    let inner_types: Vec<RustType> = args
                         .args
                         .iter()
                         .filter_map(|arg| {
@@ -532,12 +563,12 @@ fn check_rust_type(ty: &syn::Type) -> Option<RustType2> {
                             }
                         })
                         .collect();
-                    Some(RustType2::Generic(ident.to_string(), inner_types))
+                    Some(RustType::Generic(ident.to_string(), inner_types))
                 } else {
-                    Some(RustType2::Generic(ident.to_string(), vec![]))
+                    Some(RustType::Generic(ident.to_string(), vec![]))
                 }
             } else if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                let inner_types: Vec<RustType2> = args
+                let inner_types: Vec<RustType> = args
                     .args
                     .iter()
                     .filter_map(|arg| {
@@ -548,38 +579,29 @@ fn check_rust_type(ty: &syn::Type) -> Option<RustType2> {
                         }
                     })
                     .collect();
-                Some(RustType2::CustomGeneric(ident.to_string(), inner_types))
+                Some(RustType::CustomGeneric(ident.to_string(), inner_types))
             } else {
-                Some(RustType2::Custom(ident.to_string()))
+                Some(RustType::Custom(ident.to_string()))
             }
         }
         syn::Type::Reference(syn::TypeReference { elem, .. })
         | syn::Type::Paren(syn::TypeParen { elem, .. })
-        | syn::Type::Group(syn::TypeGroup { elem, .. }) => check_rust_type(&elem),
-        syn::Type::Slice(type_slice) => {
-            if let Some(inner) = check_rust_type(&type_slice.elem) {
-                Some(RustType2::Generic("Vec".to_string(), vec![inner]))
-            } else {
-                None
-            }
-        }
+        | syn::Type::Group(syn::TypeGroup { elem, .. }) => check_rust_type(elem),
+
         syn::Type::Tuple(type_tuple) => {
             if type_tuple.elems.is_empty() {
-                return Some(RustType2::BuiltIn("()".to_string()));
+                return Some(RustType::BuiltIn("()".to_string()));
             }
-            let inner_types: Vec<RustType2> = type_tuple
+            let inner_types: Vec<RustType> = type_tuple
                 .elems
                 .iter()
-                .filter_map(|inner_ty| check_rust_type(inner_ty))
+                .filter_map(check_rust_type)
                 .collect();
-            Some(RustType2::Generic("Tuple".to_string(), inner_types))
+            Some(RustType::Generic("Tuple".to_string(), inner_types))
         }
-        syn::Type::Array(type_array) => {
-            if let Some(inner) = check_rust_type(&type_array.elem) {
-                Some(RustType2::Generic("Vec".to_string(), vec![inner]))
-            } else {
-                None
-            }
+        syn::Type::Slice(syn::TypeSlice { elem, .. })
+        | syn::Type::Array(syn::TypeArray { elem, .. }) => {
+            check_rust_type(elem).map(|inner| RustType::Generic("Vec".to_string(), vec![inner]))
         }
         _ => None,
     }

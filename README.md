@@ -31,7 +31,8 @@ Note: This crate is in an early stage and may not work in all cases. Please open
 - Generate a TypeScript file with:
   - Functions to access the api
   - Supports a custom base URL
-  - Data types as Interfaces
+  - Structs as Interfaces
+  - Enums as Types, enums with values are not supported, because of the lack of that feature in TypeScript
   - Generics, even multiple and nested ones, look for that [here](#complete-example)
 - Using no extra dependencies in the generated TypeScript file.
 
@@ -41,7 +42,7 @@ Note: This crate is in an early stage and may not work in all cases. Please open
 
 ### Step 1: Define Structs and Functions
 
-To define your data structures and functions, use the `#[metadata]` macro along with the `#[meta(...)] `attribute. This macro enables `gluer` to generate metadata for these structures and functions. It does so by implementing the `metadata` function on structs or by creating a struct that implements both the `metadata` function and the handler-specific function.
+To define your structs, functions and enums, use the `#[metadata]` macro along with the `#[meta(...)] `attribute. This macro enables `gluer` to generate metadata for these structures, functions and enums. It does so by implementing the `metadata` function on structs and enums or by creating a struct that implements both the `metadata` function and the handler-specific function.
 ```rust
 use axum::{
     Json,
@@ -68,6 +69,17 @@ struct User {
     password: String,
 }
 
+// Define an enum with the metadata macro
+// Note: Enums with values are not supported
+#[metadata]
+#[derive(Default, serde::Serialize)]
+enum BookState {
+    #[default]
+    None,
+    Reserved,
+    Borrowed,
+}
+
 // Define the functions with the metadata macro
 #[metadata]
 async fn root() -> Json<String> {
@@ -77,6 +89,11 @@ async fn root() -> Json<String> {
 #[metadata]
 async fn book() -> Json<Book> {
     Book::default().into()
+}
+
+#[metadata]
+async fn book_state() -> Json<BookState> {
+    BookState::default().into()
 }
 ```
 
@@ -189,14 +206,29 @@ struct Huh<T> {
 #[metadata]
 async fn add_root(
     Path(_): Path<usize>,
-    Json(hello): Json<Hello<Hello<Huh<Age>, String>, String>>,
+    Json(hello): Json<Hello<Hello<Huh<Huh<Hello<Age, String>>>, String>, String>>,
 ) -> Json<String> {
     Json(hello.name.to_string())
 }
 
-#[tokio::main]
-async fn main() {
-    let app: Api<()> = Api::new().route("/:p", extract!(get(fetch_root).post(add_root)));
+#[metadata]
+#[derive(Serialize, Deserialize)]
+enum Enum {
+    A,
+    B,
+    C,
+}
+
+#[metadata]
+async fn get_enum() -> Json<Enum> {
+    Json(Enum::A)
+}
+
+#[tokio::test]
+async fn main_test() {
+    let app: Api<()> = Api::new()
+        .route("/", extract!(get(get_enum)))
+        .route("/:p", extract!(get(fetch_root).post(add_root)));
 
     app.generate_client("tests/api.ts", "").unwrap();
 

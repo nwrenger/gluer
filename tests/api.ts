@@ -14,6 +14,8 @@ namespace api {
         huh: T;
     }
 
+    export type Enum = "A" | "B" | "C";
+
     async function fetch_api(endpoint: string, options: RequestInit): Promise<any> {
         const response = await fetch(endpoint, {
             headers: {
@@ -37,7 +39,7 @@ namespace api {
 		return '';
 	}
 
-    export async function add_root(path: number, data: Hello<Hello<Huh<Age>, string>, string>): Promise<string> {
+    export async function add_root(path: number, data: Hello<Hello<Huh<Huh<Hello<Age, string>>>, string>, string>): Promise<string> {
         return fetch_api(`${BASE}/${encodeURIComponent(path)}`, {
             method: "POST", 
             body: JSON.stringify(data)
@@ -46,6 +48,12 @@ namespace api {
 
     export async function fetch_root(queryMap: Record<string, string>, path: number): Promise<string> {
         return fetch_api(`${BASE}/${encodeURIComponent(path)}?${new URLSearchParams(queryMap).toString()}`, {
+            method: "GET", 
+        });
+    }
+
+    export async function get_enum(): Promise<Enum> {
+        return fetch_api(`${BASE}/`, {
             method: "GET", 
         });
     }
