@@ -16,7 +16,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-gluer = "0.5.2"
+gluer = "0.5.3"
 ```
 
 ## Features
@@ -238,8 +238,8 @@ async fn get_alphabet(Path(r): Path<(Alphabet, String)>) -> Json<(Alphabet, Stri
     Json(r)
 }
 
-#[tokio::test]
-async fn main_test() {
+#[tokio::main]
+async fn main() {
     let app: Api<()> = Api::new()
         .route("/:p", extract!(get(fetch_root).post(add_root)))
         .route("/char/:path/metadata/:path", extract!(get(get_alphabet)));
