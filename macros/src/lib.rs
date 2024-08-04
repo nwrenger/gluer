@@ -11,7 +11,7 @@ fn s_err(span: proc_macro2::Span, msg: impl fmt::Display) -> syn::Error {
     syn::Error::new(span, msg)
 }
 
-/// Used to extract the metadata of functions and structs. Use inside the `Api::route` function.
+/// Extract the metadata of `axum`'s `MethodRouter` syntax. Use inside the `Api::route` function.
 #[proc_macro]
 pub fn extract(input: pc::TokenStream) -> pc::TokenStream {
     match extract_inner(input.into()) {
@@ -90,8 +90,8 @@ impl ToTokens for Route {
     }
 }
 
-/// Put before structs, functions or enums to generated metadata
-/// which will be later used by the api via `extract!`.
+/// Use before structs, functions, enums or types to generate metadata for
+/// the API via `extract!` or for dependent elements.
 ///
 /// ## Attributes
 /// - `custom = [Type, *]`: Specify here types which are named equally to std types but are custom.
