@@ -2,7 +2,11 @@ const BASE = '';
 
 namespace api {
     export interface Age {
-        age: string;
+        age: AgeInner;
+    }
+
+    export interface AgeInner {
+        age: number;
     }
 
     export interface Hello<T, S> {
@@ -15,6 +19,10 @@ namespace api {
     }
 
     export type Alphabet = "A" | "B" | "C";
+
+    export type Error = "NotFound" | "InternalServerError";
+
+    export type Result<T> = T | Error;
 
     async function fetch_api(endpoint: string, options: RequestInit): Promise<any> {
         const response = await fetch(endpoint, {
@@ -39,7 +47,7 @@ namespace api {
 		return '';
 	}
 
-    export async function add_root(path: number, data: Hello<Hello<Huh<Huh<Hello<Age, string>>>, string>, string>): Promise<string> {
+    export async function add_root(path: number, data: Result<Hello<Hello<Huh<Huh<Hello<Age, string>>>, string>, string>>): Promise<Result<string>> {
         return fetch_api(`${BASE}/${encodeURIComponent(path)}`, {
             method: "POST", 
             body: JSON.stringify(data)

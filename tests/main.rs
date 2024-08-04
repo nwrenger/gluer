@@ -23,10 +23,10 @@ pub struct Hello<T: Serialize, S> {
 #[metadata]
 #[derive(Serialize, Deserialize, Default)]
 struct Age {
-    #[meta(into = String)]
     age: AgeInner,
 }
 
+#[metadata]
 #[derive(Serialize, Deserialize, Default)]
 struct AgeInner {
     age: u8,
@@ -38,13 +38,13 @@ struct Huh<T> {
     huh: T,
 }
 
-// Even deep nested generics are supported
-#[metadata]
+// Even deep nested generics are supported and marking types as Custom
+#[metadata(custom = [Result])]
 async fn add_root(
     Path(_): Path<usize>,
-    Json(hello): Json<Hello<Hello<Huh<Huh<Hello<Age, String>>>, String>, String>>,
-) -> Json<String> {
-    Json(hello.name.to_string())
+    Json(hello): Json<Result<Hello<Hello<Huh<Huh<Hello<Age, String>>>, String>, String>>>,
+) -> Json<Result<String>> {
+    Json(Ok(hello.unwrap().name.to_string()))
 }
 
 #[metadata]
@@ -61,6 +61,16 @@ enum Alphabet {
 async fn get_alphabet(Path(r): Path<(Alphabet, String)>) -> Json<(Alphabet, String)> {
     Json(r)
 }
+
+#[metadata]
+#[derive(Serialize, Deserialize, Debug)]
+enum Error {
+    NotFound,
+    InternalServerError,
+}
+
+#[metadata]
+type Result<T> = std::result::Result<T, Error>;
 
 #[tokio::test]
 async fn main_test() {
