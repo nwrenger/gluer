@@ -1,6 +1,6 @@
 [package]
 name = "gluer"
-version = "0.5.3"
+version = "0.6.0"
 edition = "2021"
 authors = ["Nils Wrenger <nils@wrenger.net>"]
 description = "A wrapper for Rust frameworks that eliminates redundant type and function definitions between the frontend and backend"
@@ -14,7 +14,7 @@ license = "MIT"
 [lib]
 
 [dependencies]
-gluer-macros = { path = "macros", version = "0.5.3" }
+gluer-macros = { path = "macros", version = "0.6.0" }
 axum = "0.7.5"
 
 [dev-dependencies]

@@ -16,12 +16,10 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-gluer = "0.5.3"
+gluer = "0.6.0"
 ```
 
 ## Features
-
-Note: This crate is in an early stage and may not work in all cases. Please open an issue if you encounter any problems!
 
 - Define routing and API generation as outlined in [How to use](#how-to-use).
 - Infer input and output types of functions.
@@ -34,6 +32,8 @@ Note: This crate is in an early stage and may not work in all cases. Please open
   - Structs as Interfaces
   - Enums as Types, enums with values are not supported, because of the lack of that feature in TypeScript
   - Tuples as the TypeScript equivalent, also supports tuples in `axum`'s path 
+  - Types as the TypeScript equivalent
+  - Supports converting rust specific types as `Result` using the `custom = [Type, *]` attribute as custom ones
   - Generics, even multiple and nested ones, look for that [here](#complete-example)
 - Using no extra dependencies in the generated TypeScript file.
 
@@ -53,10 +53,15 @@ use gluer::metadata;
 use serde::{Serialize, Deserialize};
 
 // Define a struct with the metadata macro
-#[metadata]
-#[derive(Default, Serialize, Deserialize)]
+#[metadata(custom = [Result])]
+#[derive(Serialize, Deserialize)]
 struct Book {
     name: String,
+    // When you use types as `Result`, `Option` or `Vec` the 
+    // macro sees them as a default rust type, meaning when
+    // you wanting to use custom ones you have to specify that
+    // via the `custom` attribute on `#[metadata]`
+    some_result: Result<String>,
     // Sometimes you don't have access to certain data types, 
     // so you can override them using `#[meta(into = Type)]` 
     // or skip them entirely via `#[meta(skip)]`
@@ -65,6 +70,12 @@ struct Book {
     #[meta(skip)]
     borrower: User,
 }
+
+// Everything you want to use, even if it's just a
+// dependency of struct or type, needs to be declared
+// with the `#[metadata]` macro
+#[metadata]
+type Result<T> = std::result::Result<T, String>;
 
 #[derive(Default, Serialize, Deserialize)]
 struct User {
@@ -199,10 +210,10 @@ pub struct Hello<T: Serialize, S> {
 #[metadata]
 #[derive(Serialize, Deserialize, Default)]
 struct Age {
-    #[meta(into = String)]
     age: AgeInner,
 }
 
+#[metadata]
 #[derive(Serialize, Deserialize, Default)]
 struct AgeInner {
     age: u8,
@@ -214,13 +225,13 @@ struct Huh<T> {
     huh: T,
 }
 
-// Even deep nested generics are supported
-#[metadata]
+// Even deep nested generics are supported and marking types as Custom
+#[metadata(custom = [Result])]
 async fn add_root(
     Path(_): Path<usize>,
-    Json(hello): Json<Hello<Hello<Huh<Huh<Hello<Age, String>>>, String>, String>>,
-) -> Json<String> {
-    Json(hello.name.to_string())
+    Json(hello): Json<Result<Hello<Hello<Huh<Huh<Hello<Age, String>>>, String>, String>>>,
+) -> Json<Result<String>> {
+    Json(Ok(hello.unwrap().name.to_string()))
 }
 
 #[metadata]
@@ -237,6 +248,17 @@ enum Alphabet {
 async fn get_alphabet(Path(r): Path<(Alphabet, String)>) -> Json<(Alphabet, String)> {
     Json(r)
 }
+
+#[metadata]
+#[derive(Serialize, Deserialize, Debug)]
+enum Error {
+    NotFound,
+    InternalServerError,
+}
+
+// And types?!?
+#[metadata]
+type Result<T> = std::result::Result<T, Error>;
 
 #[tokio::main]
 async fn main() {
