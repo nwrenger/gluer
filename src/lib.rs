@@ -206,10 +206,11 @@ impl Route {
                         enum_types,
                         type_types,
                     )?;
-                    if let std::collections::btree_map::Entry::Vacant(e) =
-                        type_types.entry(type_info.name.to_string())
-                    {
-                        e.insert(type_info.generate_type_type()?);
+                    if !type_types.contains_key(&type_info.name.to_string()) {
+                        type_types.insert(
+                            type_info.name.to_string(),
+                            type_info.generate_type_type(interfaces, enum_types, type_types)?,
+                        );
                     }
                 }
             }
@@ -298,16 +299,6 @@ pub enum TypeCategory {
     Type(TypeInfo),
 }
 
-impl TypeCategory {
-    fn unwrap(&self) -> &TypeInfo {
-        match &self {
-            TypeCategory::Struct(type_info) => type_info,
-            TypeCategory::Enum(type_info) => type_info,
-            TypeCategory::Type(type_info) => type_info,
-        }
-    }
-}
-
 /// Type information.
 #[derive(Clone, Debug)]
 pub struct TypeInfo {
@@ -355,21 +346,25 @@ impl TypeInfo {
         Ok(enum_type)
     }
 
-    fn generate_type_type(&self) -> Result<String> {
+    fn generate_type_type(
+        &self,
+        interfaces: &BTreeMap<String, String>,
+        enum_types: &BTreeMap<String, String>,
+        type_types: &BTreeMap<String, String>,
+    ) -> Result<String> {
         let mut type_type = format!(
-            "    export type {}<{}> = ",
+            "    export type {}{} = ",
             self.name,
-            self.generics.join(", ")
+            if self.generics.is_empty() {
+                String::new()
+            } else {
+                format!("<{}>", &self.generics.join(", "))
+            }
         );
-        let mut generics = self.generics.clone();
-        let mut dependencies = self.dependencies.clone();
         let mut fields = vec![];
-        while let Some(ty) = generics.pop() {
-            fields.push(ty);
-        }
-        while let Some(ty) = dependencies.pop() {
-            let ty = ty.unwrap().name.clone();
-            fields.push(ty);
+        for Field { ty, .. } in &self.fields {
+            let ty = ty.to_api_type(&self.generics, interfaces, enum_types, type_types)?;
+            fields.push(ty.unwrap());
         }
         for (i, field) in fields.iter().enumerate() {
             type_type.push_str(&format!(

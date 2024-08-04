@@ -367,11 +367,10 @@ fn generate_type(
 
     let mut dependencies: HashMap<String, Vec<RustType>> = HashMap::new();
 
-    if let Some(ty) = check_rust_type(&item_type.ty, &metadata_attr.custom) {
-        process_rust_type(&ty, &mut dependencies, &generics);
-    } else {
-        return Err(s_err(item_type.ty.span(), "Unsupported type"));
-    }
+    let ty = check_rust_type(&item_type.ty, &metadata_attr.custom)
+        .ok_or_else(|| s_err(item_type.ty.span(), "Unsupported type"))?;
+
+    process_rust_type(&ty, &mut dependencies, &generics);
 
     let trait_ident = syn::Ident::new(
         &format!("{}Metadata", type_name),
@@ -400,8 +399,8 @@ fn generate_type(
                     gluer::TypeInfo {
                         name: String::from(#type_name),
                         generics: vec![#(#generics_quote),*],
-                        fields: vec![],
-                        dependencies: vec![#(#dependencies_quote)*], // todo
+                        fields: vec![gluer::Field { name: String::new(), ty: #ty }],
+                        dependencies: vec![#(#dependencies_quote)*],
                     }
                 )
             }

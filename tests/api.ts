@@ -24,6 +24,8 @@ namespace api {
 
     export type Result<T> = T | Error;
 
+    export type S = string;
+
     async function fetch_api(endpoint: string, options: RequestInit): Promise<any> {
         const response = await fetch(endpoint, {
             headers: {
@@ -60,7 +62,7 @@ namespace api {
         });
     }
 
-    export async function get_alphabet(pathTuple: [Alphabet, string]): Promise<[Alphabet, string]> {
+    export async function get_alphabet(pathTuple: [Alphabet, S]): Promise<[Alphabet, S]> {
         return fetch_api(`${BASE}/char/${encodeURIComponent(pathTuple[0])}/metadata/${encodeURIComponent(pathTuple[1])}`, {
             method: "GET", 
         });

@@ -58,7 +58,7 @@ enum Alphabet {
 
 // Even tuples are supported
 #[metadata]
-async fn get_alphabet(Path(r): Path<(Alphabet, String)>) -> Json<(Alphabet, String)> {
+async fn get_alphabet(Path(r): Path<(Alphabet, S)>) -> Json<(Alphabet, S)> {
     Json(r)
 }
 
@@ -71,6 +71,9 @@ enum Error {
 
 #[metadata]
 type Result<T> = std::result::Result<T, Error>;
+
+#[metadata]
+type S = String;
 
 #[tokio::test]
 async fn main_test() {
