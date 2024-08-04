@@ -38,7 +38,7 @@ struct Huh<T> {
     huh: T,
 }
 
-// Even deep nested generics are supported and marking types as Custom
+// Even deep nested generics are supported and tagging default rust types as Custom
 #[metadata(custom = [Result])]
 async fn add_root(
     Path(_): Path<usize>,
@@ -69,6 +69,7 @@ enum Error {
     InternalServerError,
 }
 
+// And types?!?
 #[metadata]
 type Result<T> = std::result::Result<T, Error>;
 
