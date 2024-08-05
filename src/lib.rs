@@ -206,6 +206,7 @@ impl syn::parse::Parse for MetadataAttr {
 /// ## Notes
 /// Ensure that the `base` URL does not end with a slash (`/`). For example:
 /// - Use `""` for no base URL if you are utilizing `axum`'s static file serving.
+/// - Use `"http://localhost:8080"` for a local server.
 #[proc_macro]
 pub fn generate(input: pc::TokenStream) -> pc::TokenStream {
     match generate_inner(input.into()) {
