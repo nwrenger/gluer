@@ -87,7 +87,7 @@ async fn main_test() {
     route!(_app, "/:p", get(fetch_root).post(add_root));
     route!(_app, "/char/:path/metadata/:path", get(get_alphabet));
 
-    // Make sure to change "tests" to "src" when copying this example
+    // Make sure to change "tests" to "src" when copying this example into a normal project
     generate!("tests", "tests/api.ts", "");
 
     let _listener = tokio::net::TcpListener::bind("127.0.0.1:8080")

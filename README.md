@@ -153,12 +153,12 @@ route!(app, "/:hello", get(hello));
 
 ### Step 3: Generate API
 
-Generate the API file using the `generate!` macro. This generates the TypeScript file on macro expansion (compile time). You have to specify the `root directory` of your current project, normally `src`, a `path`, where the file should be generated to and with what name, and a different `base`, `""` means no different base.
+Generate the API file using the `generate!` macro. This macro generates the TypeScript file during macro expansion (compile time). You need to specify the `project_paths` of your current project, which can be a root directory (represented by `""`), multiple directories, or specific files (e.g., `["src", "dir1", "dir2/some.rs"]`). Additionally, you need to provide a `path` where the generated file will be saved, including the filename, and a `base` URL for the API. The `base` URL should not end with a slash (`/`); use `""` for no base URL if you are utilizing `axum`'s static file serving, or provide a URL like `"http://localhost:8080"` for a local server.
 
 ```rust
 use gluer::generate;
 
-// Make sure to change "tests" to "src" when copying this example
+// Make sure to change "tests" to "src" when copying this example into a normal project
 generate!("tests", "tests/api.ts", "");
 ```
 
@@ -258,7 +258,7 @@ async fn main() {
     route!(_app, "/:p", get(fetch_root).post(add_root));
     route!(_app, "/char/:path/metadata/:path", get(get_alphabet));
 
-    // Make sure to change "tests" to "src" when copying this example
+    // Make sure to change "tests" to "src" when copying this example into a normal project
     generate!("tests", "tests/api.ts", "");
 
     let _listener = tokio::net::TcpListener::bind("127.0.0.1:8080")

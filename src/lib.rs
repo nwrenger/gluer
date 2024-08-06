@@ -24,12 +24,12 @@ fn s_err(span: proc_macro2::Span, msg: impl fmt::Display) -> syn::Error {
 
 /// Use this for defining the routes of the router, this is kind of a wrapper, needed for the `generate!` macro to find this.
 ///
-/// ## Parameters
+/// # Parameters
 /// - `router_ident`: The ident of the router variable.
 /// - `url`: The URL of the route.
 /// - `base`: The base URL for the API.
 ///
-/// ## Note
+/// # Note
 /// When using state, make sure to return the router with the state, like this:
 /// ```rust
 /// use axum::{Router, routing::get, extract::State};
@@ -41,7 +41,7 @@ fn s_err(span: proc_macro2::Span, msg: impl fmt::Display) -> syn::Error {
 ///
 /// route!(router, "/api", get(fetch_root));
 ///
-/// router.with_state::<()>(()); // <- here
+/// router.with_state::<()>(()); // <- here and remove the semicolon for returning it
 #[proc_macro]
 pub fn route(input: pc::TokenStream) -> pc::TokenStream {
     match route_inner(input.into()) {
@@ -119,10 +119,10 @@ impl ToTokens for MethodRouter {
 
 /// Use before structs, functions, enums or types to be findable by the `generate!` macro.
 ///
-/// ## Attributes
+/// # Attributes
 /// - `custom = [Type, *]`: Specify here types which are named equally to std types but are custom.
 ///
-/// ## Struct Attributes
+/// # Struct Attributes
 ///
 /// - `#[meta(into = Type)]`: Specify a type to convert the field into.
 /// - `#[meta(skip)]`: Skip the field.
@@ -199,14 +199,13 @@ impl syn::parse::Parse for MetadataAttr {
 /// Generates a TypeScript API client for the frontend from the API routes.
 ///
 /// ## Parameters
-/// - `root_dir`: The root directory of the Rust files.
-/// - `path`: The directory and filename where the generated file will be saved.
-/// - `base`: The base URL for the API.
-///
-/// ## Notes
-/// Ensure that the `base` URL does not end with a slash (`/`). For example:
-/// - Use `""` for no base URL if you are utilizing `axum`'s static file serving.
-/// - Use `"http://localhost:8080"` for a local server.
+/// - `paths`: An array of directories and/or files to include for retrieving project data.
+///   - Supports a root directory via `""`.
+///   - Supports multiple directories or files via `["dir1", "dir2/some.rs"]`.
+/// - `path`: The directory and filename where the generated TypeScript file will be saved.
+/// - `base`: The base URL for the API. This URL should not end with a slash (`/`). Examples:
+///   - Use `""` if you are utilizing `axum`'s static file serving and need no base URL.
+///   - Use `"http://localhost:8080"` for a local server.
 #[proc_macro]
 pub fn generate(input: pc::TokenStream) -> pc::TokenStream {
     match generate_inner(input.into()) {
@@ -217,18 +216,47 @@ pub fn generate(input: pc::TokenStream) -> pc::TokenStream {
 
 fn generate_inner(input: TokenStream) -> syn::Result<TokenStream> {
     let GenerateArgs {
-        root_dir,
+        project_paths,
         path,
         base,
     } = syn::parse2::<GenerateArgs>(input.clone())?;
+
+    let project_paths = project_paths
+        .iter()
+        .map(|s: &String| std::path::PathBuf::from(s))
+        .collect::<Vec<_>>();
 
     let mut routes = Vec::new();
     let mut fn_infos = HashMap::new();
     let mut type_infos = HashMap::new();
 
-    let mut parsed_ts = ParsedTypeScript::filled(&base); // todo: base
+    let mut parsed_ts = ParsedTypeScript::filled(&base);
 
-    fn process_dir(
+    fn process_paths(
+        project_paths: &[std::path::PathBuf],
+        routes: &mut Vec<Route>,
+        fn_infos: &mut HashMap<String, FnInfo>,
+        type_infos: &mut HashMap<String, TypeCategory>,
+    ) -> syn::Result<()> {
+        for path in project_paths {
+            if path.is_dir() {
+                process_single_dir(path, routes, fn_infos, type_infos)?;
+            } else if path.extension().and_then(|s| s.to_str()) == Some("rs") {
+                process_single_file(path, routes, fn_infos, type_infos)?;
+            } else {
+                return Err(s_err(
+                    proc_macro2::Span::call_site(),
+                    format!(
+                        "Path '{}' is not a directory or a Rust file",
+                        path.display()
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn process_single_dir(
         dir: &std::path::Path,
         routes: &mut Vec<Route>,
         fn_infos: &mut HashMap<String, FnInfo>,
@@ -248,18 +276,28 @@ fn generate_inner(input: TokenStream) -> syn::Result<TokenStream> {
             })?;
             let path = entry.path();
             if path.is_dir() {
-                process_dir(&path, routes, fn_infos, type_infos)?;
+                process_single_dir(&path, routes, fn_infos, type_infos)?;
             } else if path.extension().and_then(|s| s.to_str()) == Some("rs") {
-                let content = fs::read_to_string(&path).map_err(|e| {
-                    s_err(
-                        proc_macro2::Span::call_site(),
-                        format!("Couldn't read file to string: {}", e),
-                    )
-                })?;
-                let syntax = syn::parse_file(&content)?;
-                process_syntax(&syntax.items, routes, fn_infos, type_infos)?;
+                process_single_file(&path, routes, fn_infos, type_infos)?;
             }
         }
+        Ok(())
+    }
+
+    fn process_single_file(
+        path: &std::path::Path,
+        routes: &mut Vec<Route>,
+        fn_infos: &mut HashMap<String, FnInfo>,
+        type_infos: &mut HashMap<String, TypeCategory>,
+    ) -> syn::Result<()> {
+        let content = fs::read_to_string(path).map_err(|e| {
+            s_err(
+                proc_macro2::Span::call_site(),
+                format!("Couldn't read file to string: {}", e),
+            )
+        })?;
+        let syntax = syn::parse_file(&content)?;
+        process_syntax(&syntax.items, routes, fn_infos, type_infos)?;
         Ok(())
     }
 
@@ -370,12 +408,7 @@ fn generate_inner(input: TokenStream) -> syn::Result<TokenStream> {
         Ok(())
     }
 
-    process_dir(
-        std::path::Path::new(&root_dir),
-        &mut routes,
-        &mut fn_infos,
-        &mut type_infos,
-    )?;
+    process_paths(&project_paths, &mut routes, &mut fn_infos, &mut type_infos)?;
 
     for route in routes {
         let fn_info = fn_infos.get(&route.handler).ok_or(s_err(
@@ -417,14 +450,21 @@ fn generate_inner(input: TokenStream) -> syn::Result<TokenStream> {
 }
 
 struct GenerateArgs {
-    root_dir: String,
+    project_paths: Vec<String>,
     path: String,
     base: String,
 }
 
 impl Parse for GenerateArgs {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let root_dir = input.parse::<syn::LitStr>()?.value();
+        let project_paths = if input.peek(syn::token::Bracket) {
+            let content;
+            bracketed!(content in input);
+            let parsed_content: Punctuated<LitStr, Comma> = Punctuated::parse_terminated(&content)?;
+            parsed_content.iter().map(|lit| lit.value()).collect()
+        } else {
+            vec![input.parse::<syn::LitStr>()?.value()]
+        };
         input.parse::<syn::Token![,]>()?;
         let path = input.parse::<syn::LitStr>()?.value();
         input.parse::<syn::Token![,]>()?;
@@ -435,7 +475,7 @@ impl Parse for GenerateArgs {
         }
 
         Ok(GenerateArgs {
-            root_dir,
+            project_paths,
             path,
             base,
         })
