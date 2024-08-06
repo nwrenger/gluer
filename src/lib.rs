@@ -22,7 +22,7 @@ fn s_err(span: proc_macro2::Span, msg: impl fmt::Display) -> syn::Error {
     syn::Error::new(span, msg)
 }
 
-/// Use this for defining the routes of the router, this is kind of a wrapper, needed for the `generate` function to find this.
+/// Use this for defining the routes of the router, this is kind of a wrapper, needed for the `generate!` macro to find this.
 ///
 /// ## Parameters
 /// - `router_ident`: The ident of the router variable.
@@ -117,7 +117,7 @@ impl ToTokens for MethodRouter {
     }
 }
 
-/// Use before structs, functions, enums or types to be findable by the `generate` function.
+/// Use before structs, functions, enums or types to be findable by the `generate!` macro.
 ///
 /// ## Attributes
 /// - `custom = [Type, *]`: Specify here types which are named equally to std types but are custom.
