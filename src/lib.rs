@@ -410,6 +410,13 @@ fn generate_inner(input: TokenStream) -> syn::Result<TokenStream> {
 
     process_paths(&project_paths, &mut routes, &mut fn_infos, &mut type_infos)?;
 
+    if routes.is_empty() {
+        return Err(s_err(
+            proc_macro2::Span::call_site(),
+            "No routes found, please use the `route!` macro for defining them",
+        ));
+    }
+
     for route in routes {
         let fn_info = fn_infos.get(&route.handler).ok_or(s_err(
             proc_macro2::Span::call_site(),
