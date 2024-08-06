@@ -25,16 +25,15 @@ gluer = "0.7.0"
 - Everything is done on macro expansion (compile time), even the generating of the TypeScript file.
 - Infer input and output types of functions.
 - Support `axum`'s types completely.
-- Convert Rust structs to TypeScript interfaces.
-  - Via the `[#metadata]` attribute macro with the `#[meta(...)]` attribute
 - Generate a TypeScript file with:
   - Functions to access the api
   - Supports a custom base URL
-  - Structs as Interfaces
+  - Structs as Interfaces, supports changing the generated type via the `#[meta(...)]` attribute
   - Enums as Types, enums with values are not supported, because of the lack of that feature in TypeScript
-  - Tuples as the TypeScript equivalent, also supports tuples in `axum`'s path 
   - Types as the TypeScript equivalent
-  - Supports converting rust specific types as `Result` using the `custom = [Type, *]` attribute as custom ones
+  - Supports converting docstring to the TypeScript equivalent
+  - Tuples as the TypeScript equivalent, also supports tuples in `axum`'s path 
+  - Supports converting rust specific types as `Result` as custom ones using the `custom = [Type, *]` attribute
   - Generics, even multiple and nested ones, look for that [here](#complete-example)
 - Using no extra dependencies in the generated TypeScript file.
 
@@ -53,7 +52,9 @@ use axum::{
 use gluer::metadata;
 use serde::{Serialize, Deserialize};
 
-// Define a struct with the metadata macro
+/// Define a struct with the metadata macro
+/// Note: This is a docstring and will be
+/// converted to the TypeScript equivalent
 #[metadata(custom = [Result])]
 #[derive(Serialize, Deserialize)]
 struct Book {
@@ -178,12 +179,15 @@ use gluer::{generate, metadata, route};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// An example of a simple function with a `Path` and `Query` extractor
 #[metadata]
 async fn fetch_root(Query(test): Query<HashMap<String, String>>, Path(p): Path<usize>) -> String {
     test.get(&p.to_string()).unwrap().clone()
 }
 
 // Generics are supported, multiple even
+// Note: This is not a docstring and won't
+// be converted
 #[metadata]
 #[derive(Serialize, Deserialize, Default)]
 pub struct Hello<T: Serialize, S> {
@@ -191,6 +195,7 @@ pub struct Hello<T: Serialize, S> {
     vec: Vec<T>,
 }
 
+/// Might want to look into the `api.ts` file to see the docstring for this struct
 #[metadata]
 #[derive(Serialize, Deserialize, Default)]
 struct Age {

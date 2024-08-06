@@ -15,7 +15,7 @@ use syn::{
     punctuated::Punctuated,
     spanned::Spanned,
     token::{Brace, Comma},
-    Item, Stmt, StmtMacro, Type,
+    Item, LitStr, Stmt, StmtMacro, Type,
 };
 
 fn s_err(span: proc_macro2::Span, msg: impl fmt::Display) -> syn::Error {
@@ -457,6 +457,7 @@ struct FnInfo {
     params: Vec<Field>,
     response: RustType,
     types: Vec<String>,
+    docs: Vec<String>,
 }
 
 impl FnInfo {
@@ -532,7 +533,9 @@ impl FnInfo {
             url += "${query_str(query)}";
         }
 
-        Ok(format!(
+        let mut fn_str = String::new();
+        fn_str.push_str(&generate_docstring(&self.docs));
+        fn_str.push_str(&format!(
             r#"    export async function {fn_name}({params_str}): Promise<{response_type}> {{
         return fetch_api(`${{BASE}}{url}`, {{
             method: "{method}", {body_assignment}
@@ -545,7 +548,8 @@ impl FnInfo {
             url = url,
             method = route.method.to_uppercase(),
             body_assignment = body_assignment
-        ))
+        ));
+        Ok(fn_str)
     }
 }
 
@@ -637,6 +641,7 @@ fn generate_struct(
         .type_params()
         .map(|type_param| type_param.ident.to_string())
         .collect();
+    let docs = get_docs(&item_struct.attrs);
 
     let mut dependencies: Vec<String> = Vec::new();
 
@@ -694,6 +699,7 @@ fn generate_struct(
         generics,
         fields: fields_info,
         dependencies,
+        docs,
     })
 }
 
@@ -742,6 +748,7 @@ fn generate_enum(item_enum: syn::ItemEnum, _: MetadataAttr) -> syn::Result<TypeI
 
     let enum_name_ident = item_enum.ident.clone();
     let enum_name = enum_name_ident.to_string();
+    let docs = get_docs(&item_enum.attrs);
 
     let fields = item_enum
         .variants
@@ -766,6 +773,7 @@ fn generate_enum(item_enum: syn::ItemEnum, _: MetadataAttr) -> syn::Result<TypeI
         generics: vec![],
         fields,
         dependencies: vec![],
+        docs,
     })
 }
 
@@ -777,6 +785,7 @@ fn generate_type(item_type: syn::ItemType, metadata_attr: MetadataAttr) -> syn::
         .type_params()
         .map(|type_param| type_param.ident.to_string())
         .collect();
+    let docs = get_docs(&item_type.attrs);
 
     let mut dependencies: Vec<String> = Vec::new();
 
@@ -793,12 +802,15 @@ fn generate_type(item_type: syn::ItemType, metadata_attr: MetadataAttr) -> syn::
             ty,
         }],
         dependencies,
+        docs,
     })
 }
 
 fn generate_function(item_fn: syn::ItemFn, metadata_attr: MetadataAttr) -> syn::Result<FnInfo> {
     let fn_name_ident = item_fn.sig.ident.clone();
     let name = fn_name_ident.to_string();
+    let docs = get_docs(&item_fn.attrs);
+
     let mut dependencies = Vec::new();
 
     let params = item_fn
@@ -846,6 +858,7 @@ fn generate_function(item_fn: syn::ItemFn, metadata_attr: MetadataAttr) -> syn::
         params: params_info,
         response,
         types: dependencies,
+        docs,
     })
 }
 
@@ -878,6 +891,31 @@ fn process_rust_type(rust_type: &RustType, dependencies: &mut Vec<String>, gener
     }
 }
 
+fn get_docs(attrs: &[syn::Attribute]) -> Vec<String> {
+    attrs
+        .iter()
+        .filter_map(|attr| {
+            if attr.path().is_ident("doc") {
+                Some(
+                    syn::parse::<LitStr>(
+                        attr.meta
+                            .require_name_value()
+                            .ok()?
+                            .value
+                            .to_token_stream()
+                            .into(),
+                    )
+                    .ok()?
+                    .value(),
+                )
+            } else {
+                None
+            }
+        })
+        .map(|s| s.trim().to_string())
+        .collect()
+}
+
 /// Type information.
 #[derive(Clone, Debug)]
 struct TypeInfo {
@@ -885,6 +923,7 @@ struct TypeInfo {
     generics: Vec<String>,
     fields: Vec<Field>,
     dependencies: Vec<String>,
+    docs: Vec<String>,
 }
 
 impl TypeInfo {
@@ -899,7 +938,13 @@ impl TypeInfo {
         } else {
             format!("<{}>", self.generics.join(", "))
         };
-        let mut interface = format!("    export interface {}{} {{\n", self.name, generics_str);
+
+        let mut interface = String::new();
+        interface.push_str(&generate_docstring(&self.docs));
+        interface.push_str(&format!(
+            "    export interface {}{} {{\n",
+            self.name, generics_str
+        ));
         for Field { name, ty } in &self.fields {
             let ty = ty.to_api_type(&self.generics, interfaces, enum_types, type_types)?;
             interface.push_str(&format!("        {}: {};\n", name, ty.unwrap()));
@@ -909,7 +954,9 @@ impl TypeInfo {
     }
 
     fn generate_enum_type(&self) -> syn::Result<String> {
-        let mut enum_type = format!("    export type {} = ", self.name);
+        let mut enum_type = String::new();
+        enum_type.push_str(&generate_docstring(&self.docs));
+        enum_type.push_str(&format!("    export type {} = ", self.name));
         for (i, field) in self.fields.iter().enumerate() {
             enum_type.push_str(&format!(
                 "\"{}\"{}",
@@ -931,7 +978,9 @@ impl TypeInfo {
         enum_types: &BTreeMap<String, String>,
         type_types: &BTreeMap<String, String>,
     ) -> syn::Result<String> {
-        let mut type_type = format!(
+        let mut type_type = String::new();
+        type_type.push_str(&generate_docstring(&self.docs));
+        type_type.push_str(&format!(
             "    export type {}{} = ",
             self.name,
             if self.generics.is_empty() {
@@ -939,7 +988,7 @@ impl TypeInfo {
             } else {
                 format!("<{}>", &self.generics.join(", "))
             }
-        );
+        ));
         let mut fields = vec![];
         for Field { ty, .. } in &self.fields {
             let ty = ty.to_api_type(&self.generics, interfaces, enum_types, type_types)?;
@@ -955,6 +1004,18 @@ impl TypeInfo {
         type_type.push('\n');
         Ok(type_type)
     }
+}
+
+fn generate_docstring(docs: &[String]) -> String {
+    let mut docstring = String::new();
+    if !docs.is_empty() {
+        docstring.push_str("    /**\n");
+        for doc in docs {
+            docstring.push_str(&format!("        {}\n", doc));
+        }
+        docstring.push_str("    */\n");
+    }
+    docstring
 }
 
 /// Field information.
