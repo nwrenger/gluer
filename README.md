@@ -153,7 +153,7 @@ route!(app, "/:hello", get(hello));
 
 ### Step 3: Generate API
 
-Generate the API file using the `generate!` macro. This macro generates the TypeScript file during macro expansion (compile time). You need to specify the `project_paths` of your current project, which can be a root directory (represented by `""`), multiple directories, or specific files (e.g., `["src", "dir1", "dir2/some.rs"]`). Additionally, you need to provide a `path` where the generated file will be saved, including the filename, and a `base` URL for the API. The `base` URL should not end with a slash (`/`); use `""` for no base URL if you are utilizing `axum`'s static file serving, or provide a URL like `"http://localhost:8080"` for a local server.
+Generate the API file using the `generate!` macro. This macro generates the TypeScript file during macro expansion (compile time). You need to specify the `project_paths` of your current project, which can be a root directory (represented by `"src"`), multiple directories, or specific files (e.g., `["dir0", "dir1", "dir2/some.rs"]`). The `project_paths` will be scanned to retrieve project data, meaning collecting the information marked by the `route!` and `#[metadata]` macros. Additionally, you need to provide a `path` where the generated file will be saved, including the filename, and a `base` URL for the API. The base URL should not end with a slash (`/`); use `""` for no base URL if you are utilizing `axum`'s static file serving, or provide a URL like `"http://localhost:8080"` for a local server.
 
 ```rust
 use gluer::generate;
