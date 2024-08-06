@@ -1,9 +1,6 @@
 const BASE = '';
 
 namespace api {
-    /**
-        Might want to look into the `api.ts` file to see the docstring for this struct
-    */
     export interface Age {
         age: AgeInner;
     }
@@ -59,9 +56,6 @@ namespace api {
         });
     }
 
-    /**
-        An example of a simple function with a `Path` and `Query` extractor
-    */
     export async function fetch_root(queryMap: Record<string, string>, path: number): Promise<string> {
         return fetch_api(`${BASE}/${encodeURIComponent(path)}?${new URLSearchParams(queryMap).toString()}`, {
             method: "GET", 

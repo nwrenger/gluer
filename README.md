@@ -23,11 +23,10 @@ gluer = "0.7.0"
 
 - Define routing and API generation as outlined in [How to use](#how-to-use).
 - Everything is done on macro expansion (compile time), even the generating of the TypeScript file.
-- Infer input and output types of functions.
 - Support `axum`'s types completely.
 - Generate a TypeScript file with:
-  - Functions to access the api
-  - Supports a custom base URL
+  - A custom base URL
+  - Functions to access the api, infers input and output types for that
   - Structs as Interfaces, supports changing the generated type via the `#[meta(...)]` attribute
   - Enums as Types, enums with values are not supported, because of the lack of that feature in TypeScript
   - Types as the TypeScript equivalent
@@ -35,7 +34,7 @@ gluer = "0.7.0"
   - Tuples as the TypeScript equivalent, also supports tuples in `axum`'s path 
   - Supports converting rust specific types as `Result` as custom ones using the `custom = [Type, *]` attribute
   - Generics, even multiple and nested ones, look for that [here](#complete-example)
-- Using no extra dependencies in the generated TypeScript file.
+  - No extra dependencies
 
 ## How to use
 
@@ -43,7 +42,7 @@ gluer = "0.7.0"
 
 ### Step 1: Define Structs and Functions
 
-To define your structs, functions and enums, use the `#[metadata]` macro along with the `#[meta(...)] `attribute. This macro enables `gluer` to generate metadata for these structures, functions and enums. It does so by implementing the `metadata` function on structs and enums or by creating a struct that implements both the `metadata` function and the handler-specific function.
+To define your structs, functions and enums, use the `#[metadata]` macro along with the `#[meta(...)] `attribute. This enables the `generate!` macro to find those and converting them into the TypeScript equivalent.
 ```rust
 use axum::{
     Json,
@@ -122,7 +121,7 @@ async fn book_state() -> Json<BookState> {
 ```
 
 ### Step 2: Add Routes
-Use the `route!` macro with `axum`'s Router to add routes. This enables the `generate` macro to identify the route and generate corresponding functions, structs, types, and enums. Note that inline functions cannot be used because the function names in the generated TypeScript file are inferred from the handler function names.
+Use the `route!` macro with `axum`'s Router to add routes. This enables the `generate!` macro to identify the route and generate corresponding functions, structs, types, and enums. Note that inline functions cannot be used because the function names in the generated TypeScript file are inferred from the handler function names.
 
 ```rust
 use axum::{
@@ -154,7 +153,7 @@ route!(app, "/:hello", get(hello));
 
 ### Step 3: Generate API
 
-Generate the API file using the `generate` macro. This generates the TypeScript file on macro expansion (compile time). You have to specify the `root directory` of your current project, normally `src`, a `path`, where the file should be generated to and with what name, and a different `base`, `""` means no different base.
+Generate the API file using the `generate!` macro. This generates the TypeScript file on macro expansion (compile time). You have to specify the `root directory` of your current project, normally `src`, a `path`, where the file should be generated to and with what name, and a different `base`, `""` means no different base.
 
 ```rust
 use gluer::generate;
