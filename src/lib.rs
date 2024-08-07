@@ -265,7 +265,7 @@ fn generate_inner(input: TokenStream) -> syn::Result<TokenStream> {
         for entry in fs::read_dir(dir).map_err(|e| {
             s_err(
                 proc_macro2::Span::call_site(),
-                format!("Couldn't read dir entry: {}", e),
+                format!("Couldn't read entire dir: {}", e),
             )
         })? {
             let entry = entry.map_err(|e| {
@@ -439,7 +439,7 @@ fn generate_inner(input: TokenStream) -> syn::Result<TokenStream> {
         if parsed_ts.functions.contains_key(&fn_info.name) {
             return Err(s_err(
                 proc_macro2::Span::call_site(),
-                format!("Function with name '{}' already exists", fn_info.name,),
+                format!("Function with name '{}' already exists", fn_info.name),
             ));
         } else {
             parsed_ts.functions.insert(
