@@ -518,7 +518,7 @@ impl FnInfo {
         let params_type = self
             .params
             .iter()
-            .map(|Field { name: _, ty }| {
+            .map(|Field { ty, .. }| {
                 ty.to_api_type(
                     &[],
                     &parsed_ts.interfaces,
@@ -581,7 +581,7 @@ impl FnInfo {
         }
 
         let mut fn_str = String::new();
-        fn_str.push_str(&generate_docstring(&self.docs));
+        fn_str.push_str(&generate_docstring(&self.docs, "    "));
         fn_str.push_str(&format!(
             r#"    export async function {fn_name}({params_str}): Promise<{response_type}> {{
         return fetch_api(`${{BASE}}{url}`, {{
@@ -707,6 +707,8 @@ fn generate_struct(
                 }
             };
 
+            let docs = get_docs(&field.attrs);
+
             let meta_attr = match parse_field_attr(&field.attrs) {
                 Ok(meta_attr) => meta_attr,
                 Err(e) => return Some(Err(e)),
@@ -726,25 +728,21 @@ fn generate_struct(
 
             if let Some(ty) = to_rust_type(&field_ty, &metadata_attr.custom) {
                 process_rust_type(&ty, &mut dependencies, &generics);
-                Some(Ok((ident, ty)))
+                Some(Ok(Field {
+                    name: ident,
+                    ty,
+                    docs,
+                }))
             } else {
                 Some(Err(s_err(field.span(), "Unsupported Rust Type")))
             }
         })
         .collect::<syn::Result<Vec<_>>>()?;
 
-    let fields_info: Vec<Field> = fields
-        .iter()
-        .map(|(ident, ty)| Field {
-            name: ident.clone(),
-            ty: ty.clone(),
-        })
-        .collect();
-
     Ok(TypeInfo {
         name: struct_name,
         generics,
-        fields: fields_info,
+        fields,
         dependencies,
         docs,
     })
@@ -808,9 +806,11 @@ fn generate_enum(item_enum: syn::ItemEnum, _: MetadataAttr) -> syn::Result<TypeI
                 ));
             }
             let ident = variant.ident.to_string();
+            let docs = get_docs(&variant.attrs);
             Ok(Field {
                 name: ident,
                 ty: RustType::None,
+                docs,
             })
         })
         .collect::<syn::Result<Vec<_>>>()?;
@@ -847,6 +847,7 @@ fn generate_type(item_type: syn::ItemType, metadata_attr: MetadataAttr) -> syn::
         fields: vec![Field {
             name: String::new(),
             ty,
+            docs: vec![],
         }],
         dependencies,
         docs,
@@ -897,6 +898,7 @@ fn generate_function(item_fn: syn::ItemFn, metadata_attr: MetadataAttr) -> syn::
         .map(|(pat, ty)| Field {
             name: pat.clone(),
             ty: ty.clone(),
+            docs: vec![],
         })
         .collect();
 
@@ -987,14 +989,17 @@ impl TypeInfo {
         };
 
         let mut interface = String::new();
-        interface.push_str(&generate_docstring(&self.docs));
+        interface.push_str(&generate_docstring(&self.docs, "    "));
         interface.push_str(&format!(
             "    export interface {}{} {{\n",
             self.name, generics_str
         ));
-        for Field { name, ty } in &self.fields {
-            let ty = ty.to_api_type(&self.generics, interfaces, enum_types, type_types)?;
-            interface.push_str(&format!("        {}: {};\n", name, ty.unwrap()));
+        for field in &self.fields {
+            interface.push_str(&generate_docstring(&field.docs, "        "));
+            let ty = field
+                .ty
+                .to_api_type(&self.generics, interfaces, enum_types, type_types)?;
+            interface.push_str(&format!("        {}: {};\n", field.name, ty.unwrap()));
         }
         interface.push_str("    }\n");
         Ok(interface)
@@ -1002,20 +1007,13 @@ impl TypeInfo {
 
     fn generate_enum_type(&self) -> syn::Result<String> {
         let mut enum_type = String::new();
-        enum_type.push_str(&generate_docstring(&self.docs));
-        enum_type.push_str(&format!("    export type {} = ", self.name));
-        for (i, field) in self.fields.iter().enumerate() {
-            enum_type.push_str(&format!(
-                "\"{}\"{}",
-                field.name,
-                if i == self.fields.len() - 1 {
-                    ";"
-                } else {
-                    " | "
-                }
-            ));
+        enum_type.push_str(&generate_docstring(&self.docs, "    "));
+        enum_type.push_str(&format!("    export enum {} {{\n", self.name));
+        for field in &self.fields {
+            enum_type.push_str(&generate_docstring(&field.docs, "        "));
+            enum_type.push_str(&format!("        {} = \"{}\",\n", field.name, field.name));
         }
-        enum_type.push('\n');
+        enum_type.push_str("    }\n");
         Ok(enum_type)
     }
 
@@ -1026,7 +1024,7 @@ impl TypeInfo {
         type_types: &BTreeMap<String, String>,
     ) -> syn::Result<String> {
         let mut type_type = String::new();
-        type_type.push_str(&generate_docstring(&self.docs));
+        type_type.push_str(&generate_docstring(&self.docs, "    "));
         type_type.push_str(&format!(
             "    export type {}{} = ",
             self.name,
@@ -1053,14 +1051,14 @@ impl TypeInfo {
     }
 }
 
-fn generate_docstring(docs: &[String]) -> String {
+fn generate_docstring(docs: &[String], ident: &str) -> String {
     let mut docstring = String::new();
     if !docs.is_empty() {
-        docstring.push_str("    /**\n");
+        docstring.push_str(&format!("{}/**\n", ident));
         for doc in docs {
-            docstring.push_str(&format!("        {}\n", doc));
+            docstring.push_str(&format!("{}    {}\n", ident, doc));
         }
-        docstring.push_str("    */\n");
+        docstring.push_str(&format!("{}*/\n", ident));
     }
     docstring
 }
@@ -1070,6 +1068,7 @@ fn generate_docstring(docs: &[String]) -> String {
 struct Field {
     name: String,
     ty: RustType,
+    docs: Vec<String>,
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Debug)]
@@ -1144,7 +1143,6 @@ impl<'a> ParsedTypeScript<'a> {
 			for (let key in params) {
 				if (params[key] != null) data[key] = params[key].toString();
 			}
-			// the URLSearchParams escapes any problematic values
 			return '?' + new URLSearchParams(data).toString();
 		}
 		return '';

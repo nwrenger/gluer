@@ -5,6 +5,9 @@ namespace api {
         Might want to look into the `api.ts` file to see the docstring for this struct
     */
     export interface Age {
+        /**
+            Even supports docstring on fields
+        */
         age: AgeInner;
     }
 
@@ -21,9 +24,25 @@ namespace api {
         huh: T;
     }
 
-    export type Alphabet = "A" | "B" | "C";
+    export enum Alphabet {
+        A = "A",
+        B = "B",
+        C = "C",
+    }
 
-    export type Error = "NotFound" | "InternalServerError";
+    /**
+        An example how an api error type could look like
+    */
+    export enum Error {
+        /**
+            Normal 404 error
+        */
+        NotFound = "NotFound",
+        /**
+            Internally something really bad happened
+        */
+        InternalServerError = "InternalServerError",
+    }
 
     export type Result<T> = T | Error;
 
@@ -46,7 +65,6 @@ namespace api {
 			for (let key in params) {
 				if (params[key] != null) data[key] = params[key].toString();
 			}
-			// the URLSearchParams escapes any problematic values
 			return '?' + new URLSearchParams(data).toString();
 		}
 		return '';

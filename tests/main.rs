@@ -27,6 +27,7 @@ pub struct Hello<T: Serialize, S> {
 #[metadata]
 #[derive(Serialize, Deserialize, Default)]
 struct Age {
+    /// Even supports docstring on fields
     age: AgeInner,
 }
 
@@ -66,10 +67,13 @@ async fn get_alphabet(Path(r): Path<(Alphabet, S)>) -> Json<(Alphabet, S)> {
     Json(r)
 }
 
+/// An example how an api error type could look like
 #[metadata]
 #[derive(Serialize, Deserialize, Debug)]
 enum Error {
+    /// Normal 404 error
     NotFound,
+    /// Internally something really bad happened
     InternalServerError,
 }
 

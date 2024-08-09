@@ -28,9 +28,9 @@ gluer = "0.7.1"
   - A custom base URL
   - Functions to access the api, infers input and output types for that
   - Structs as Interfaces, supports changing the generated type via the `#[meta(...)]` attribute
-  - Enums as Types, enums with values are not supported, because of the lack of that feature in TypeScript
+  - Enums as the TypeScript equivalent, enums with values are not supported, because of the lack of that feature in TypeScript
   - Types as the TypeScript equivalent
-  - Supports converting docstring to the TypeScript equivalent
+  - Supports converting docstring to the TypeScript equivalent, even of fields of structs and enums
   - Tuples as the TypeScript equivalent, also supports tuples in `axum`'s path 
   - Supports converting rust specific types as `Result` as custom ones using the `custom = [Type, *]` attribute
   - Generics, even multiple and nested ones, look for that [here](#complete-example)
@@ -57,6 +57,7 @@ use serde::{Serialize, Deserialize};
 #[metadata(custom = [Result])]
 #[derive(Serialize, Deserialize)]
 struct Book {
+    /// This will also be converted to a docstring
     name: String,
     // When you use types as `Result`, `Option` or `Vec` the 
     // macro sees them as a default rust type, meaning when
@@ -198,6 +199,7 @@ pub struct Hello<T: Serialize, S> {
 #[metadata]
 #[derive(Serialize, Deserialize, Default)]
 struct Age {
+    /// Even supports docstring on fields
     age: AgeInner,
 }
 
@@ -237,10 +239,13 @@ async fn get_alphabet(Path(r): Path<(Alphabet, S)>) -> Json<(Alphabet, S)> {
     Json(r)
 }
 
+/// An example how an api error type could look like
 #[metadata]
 #[derive(Serialize, Deserialize, Debug)]
 enum Error {
+    /// Normal 404 error
     NotFound,
+    /// Internally something really bad happened
     InternalServerError,
 }
 
