@@ -72,16 +72,16 @@ impl Parse for RouteArgs {
         let mut routes = vec![];
 
         let router_ident = input.parse::<syn::Ident>()?;
-        input.parse::<syn::Token!(,)>()?;
+        input.parse::<syn::Token![,]>()?;
         let url = input.parse::<syn::LitStr>()?;
-        input.parse::<syn::Token!(,)>()?;
+        input.parse::<syn::Token![,]>()?;
 
         while !input.is_empty() {
             let route = input.parse()?;
             routes.push(route);
 
             if !input.is_empty() {
-                input.parse::<syn::Token!(.)>()?;
+                input.parse::<syn::Token![.]>()?;
             }
         }
 
