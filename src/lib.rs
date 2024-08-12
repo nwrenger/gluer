@@ -27,7 +27,7 @@ fn s_err(span: proc_macro2::Span, msg: impl fmt::Display) -> syn::Error {
 /// # Parameters
 /// - `router_ident`: The ident of the router variable.
 /// - `url`: The URL of the route.
-/// - `base`: The base URL for the API.
+/// - `method_router`: The `Method Router` of the route using `axum`'s syntax.
 ///
 /// # Note
 /// When using state, make sure to return the router with the state, like this:
