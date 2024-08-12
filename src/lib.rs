@@ -1134,7 +1134,11 @@ impl<'a> ParsedTypeScript<'a> {
             },
             ...options,
         });
-        return response.json();
+        if (response.headers.get('Content-Length') === '0') {
+			return;
+		} else {
+			return response.json();
+		}
     }
 
     function query_str(params: Record<string, any>): string {
