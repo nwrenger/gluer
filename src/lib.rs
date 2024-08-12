@@ -231,6 +231,7 @@ fn generate_inner(input: TokenStream) -> syn::Result<TokenStream> {
     let mut type_infos = HashMap::new();
 
     let mut parsed_ts = ParsedTypeScript::filled(&base);
+    let mut needs_query_parser = false;
 
     fn process_paths(
         project_paths: &[std::path::PathBuf],
@@ -444,9 +445,13 @@ fn generate_inner(input: TokenStream) -> syn::Result<TokenStream> {
         } else {
             parsed_ts.functions.insert(
                 fn_info.name.to_string(),
-                fn_info.generate_ts_function(&route, &parsed_ts)?,
+                fn_info.generate_ts_function(&route, &parsed_ts, &mut needs_query_parser)?,
             );
         }
+    }
+
+    if needs_query_parser {
+        parsed_ts.fill_query_parser();
     }
 
     parsed_ts
@@ -512,6 +517,7 @@ impl FnInfo {
         &self,
         route: &Route,
         parsed_ts: &ParsedTypeScript,
+        needs_query_parser: &mut bool,
     ) -> syn::Result<String> {
         let mut url = route.url.to_string();
 
@@ -541,7 +547,10 @@ impl FnInfo {
                 ApiType::Json(ty) => Some(format!("data: {}", ty)),
                 ApiType::Path(ty) => Some(format!("path: {}", ty)),
                 ApiType::PathTuple(ty) => Some(format!("pathTuple: {}", ty)),
-                ApiType::Query(ty) => Some(format!("query: {}", ty)),
+                ApiType::Query(ty) => {
+                    *needs_query_parser = true;
+                    Some(format!("query: {}", ty))
+                }
                 ApiType::QueryMap(ty) => Some(format!("queryMap: {}", ty)),
                 ApiType::Unknown(_) => None,
             })
@@ -1096,7 +1105,7 @@ impl ApiType {
 
 struct ParsedTypeScript<'a> {
     base: String,
-    basic_functions: &'a str,
+    basic_functions: String,
     namespace_start: &'a str,
     namespace_end: &'a str,
     interfaces: BTreeMap<String, String>,
@@ -1108,7 +1117,7 @@ struct ParsedTypeScript<'a> {
 impl<'a> ParsedTypeScript<'a> {
     fn new(
         base: String,
-        basic_functions: &'a str,
+        basic_functions: String,
         namespace_start: &'a str,
         namespace_end: &'a str,
     ) -> Self {
@@ -1126,7 +1135,8 @@ impl<'a> ParsedTypeScript<'a> {
 
     fn filled(base: &'a str) -> ParsedTypeScript {
         let base = format!("const BASE = '{}';\n", base);
-        let basic_functions = r#"    async function fetch_api(endpoint: string, options: RequestInit): Promise<any> {
+        let basic_functions =
+            r#"    async function fetch_api(endpoint: string, options: RequestInit): Promise<any> {
         const response = await fetch(endpoint, {
             headers: {
                 "Content-Type": "application/json",
@@ -1140,7 +1150,16 @@ impl<'a> ParsedTypeScript<'a> {
 			return response.json();
 		}
     }
+"#
+            .to_string();
+        let namespace_start = "namespace api {\n";
+        let namespace_end = "}\n\nexport default api;";
 
+        ParsedTypeScript::new(base, basic_functions, namespace_start, namespace_end)
+    }
+
+    fn fill_query_parser(&mut self) {
+        self.basic_functions += r#"
     function query_str(params: Record<string, any>): string {
 		if (params) {
 			let data: Record<string, string> = {};
@@ -1152,10 +1171,6 @@ impl<'a> ParsedTypeScript<'a> {
 		return '';
 	}
 "#;
-        let namespace_start = "namespace api {\n";
-        let namespace_end = "}\n\nexport default api;";
-
-        ParsedTypeScript::new(base, basic_functions, namespace_start, namespace_end)
     }
 
     fn write_to_file<P: AsRef<std::path::Path>>(&self, path: P) -> std::io::Result<()> {

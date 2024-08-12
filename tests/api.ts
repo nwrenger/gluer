@@ -56,19 +56,12 @@ namespace api {
             },
             ...options,
         });
-        return response.json();
-    }
-
-    function query_str(params: Record<string, any>): string {
-		if (params) {
-			let data: Record<string, string> = {};
-			for (let key in params) {
-				if (params[key] != null) data[key] = params[key].toString();
-			}
-			return '?' + new URLSearchParams(data).toString();
+        if (response.headers.get('Content-Length') === '0') {
+			return;
+		} else {
+			return response.json();
 		}
-		return '';
-	}
+    }
 
     export async function add_root(path: number, data: Result<Hello<Hello<Huh<Huh<Hello<Age, string>>>, string>, string>>): Promise<Result<string>> {
         return fetch_api(`${BASE}/${encodeURIComponent(path)}`, {
