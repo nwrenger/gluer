@@ -356,7 +356,7 @@ fn generate_inner(input: TokenStream) -> syn::Result<TokenStream> {
         } else {
             parsed_ts.functions.insert(
                 fn_info.name.to_string(),
-                fn_info.generate_ts_function(&route, &parsed_ts, &mut needs_query_parser)?,
+                fn_info.generate_ts_function(route, &parsed_ts, &mut needs_query_parser)?,
             );
         }
     }

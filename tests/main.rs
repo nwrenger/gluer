@@ -90,7 +90,7 @@ async fn main_test() {
             "/:p" = get(fetch_root).post(add_root),
             "/char/:path/metadata/:path" = get(get_alphabet),
         },
-        files = "tests",// Make sure to change "tests" to "src" when copying this example into a normal project
+        files = "tests", // Make sure to change "tests" to "src" when copying this example into a normal project
         output = "tests/api.ts", //required
     };
 
