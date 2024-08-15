@@ -1,120 +1,26 @@
 #![doc = include_str!("../README.md")]
 
-use proc_macro as pc;
+use proc_macro::{self as pc};
 use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
 use std::{
     collections::{BTreeMap, HashMap},
-    fmt, fs,
+    fmt::{self, Debug},
+    fs,
     io::Write,
     vec,
 };
 use syn::{
-    bracketed, parenthesized,
+    braced, bracketed, parenthesized,
     parse::Parse,
     punctuated::Punctuated,
     spanned::Spanned,
     token::{Brace, Comma},
-    Item, LitStr, Stmt, StmtMacro, Type,
+    Item, LitStr, Token, Type,
 };
 
 fn s_err(span: proc_macro2::Span, msg: impl fmt::Display) -> syn::Error {
     syn::Error::new(span, msg)
-}
-
-/// Use this for defining the routes of the router, this is kind of a wrapper, needed for the `generate!` macro to find this.
-///
-/// # Parameters
-/// - `router_ident`: The ident of the router variable.
-/// - `url`: The URL of the route.
-/// - `method_router`: The `Method Router` of the route using `axum`'s syntax.
-///
-/// # Note
-/// When using state, make sure to return the router with the state, like this:
-/// ```rust
-/// use axum::{Router, routing::get, extract::State};
-/// use gluer::route;
-///
-/// async fn fetch_root(State(_): State<()>) -> String { String::new() }
-///
-/// let mut router = Router::new();
-///
-/// route!(router, "/api", get(fetch_root));
-///
-/// router.with_state::<()>(()); // <- here and remove the semicolon for returning it
-#[proc_macro]
-pub fn route(input: pc::TokenStream) -> pc::TokenStream {
-    match route_inner(input.into()) {
-        Ok(result) => result.into(),
-        Err(e) => e.to_compile_error().into(),
-    }
-}
-
-fn route_inner(input: TokenStream) -> syn::Result<TokenStream> {
-    let RouteArgs {
-        router_ident,
-        url,
-        routes,
-    } = syn::parse2::<RouteArgs>(input)?;
-    Ok(quote! {
-        #router_ident = #router_ident.route(#url, #(#routes).*);
-    })
-}
-
-struct RouteArgs {
-    router_ident: syn::Ident,
-    url: syn::LitStr,
-    routes: Vec<MethodRouter>,
-}
-
-impl Parse for RouteArgs {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let mut routes = vec![];
-
-        let router_ident = input.parse::<syn::Ident>()?;
-        input.parse::<syn::Token![,]>()?;
-        let url = input.parse::<syn::LitStr>()?;
-        input.parse::<syn::Token![,]>()?;
-
-        while !input.is_empty() {
-            let route = input.parse()?;
-            routes.push(route);
-
-            if !input.is_empty() {
-                input.parse::<syn::Token![.]>()?;
-            }
-        }
-
-        Ok(RouteArgs {
-            router_ident,
-            url,
-            routes,
-        })
-    }
-}
-
-struct MethodRouter {
-    method: syn::Ident,
-    handler: syn::Ident,
-}
-
-impl Parse for MethodRouter {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let method = input.parse()?;
-        let content;
-        parenthesized!(content in input);
-        let handler = content.parse()?;
-
-        Ok(MethodRouter { method, handler })
-    }
-}
-
-impl ToTokens for MethodRouter {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        let method = &self.method;
-        let handler = &self.handler;
-        tokens.extend(quote! { #method(#handler) });
-    }
 }
 
 /// Use before structs, functions, enums or types to be findable by the `generate!` macro.
@@ -199,13 +105,41 @@ impl syn::parse::Parse for MetadataAttr {
 /// Generates a TypeScript API client for the frontend from the API routes.
 ///
 /// ## Parameters
-/// - `paths`: An array of directories and/or files to include for retrieving project data.
-///   - Supports a root directory via `""`.
-///   - Supports multiple directories or files via `["dir1", "dir2/some.rs"]`.
-/// - `path`: The directory and filename where the generated TypeScript file will be saved.
-/// - `base`: The base URL for the API. This URL should not end with a slash (`/`). Examples:
-///   - Use `""` if you are utilizing `axum`'s static file serving and need no base URL.
-///   - Use `"http://localhost:8080"` for a local server.
+///
+/// - `prefix`: An optional parameter that allows you to specify a prefix for all generated routes. This can be useful if your API is hosted under a common base path (e.g., `/api`).
+/// - `routes`: A required parameter that specifies the API routes for which the TypeScript client will be generated. Each route is defined by a URL path (which can include parameters) followed by one or more HTTP methods (e.g., `get`, `post`) and their corresponding handler functions.
+/// - `files`: An optional parameter that specifies the directory or directories containing the Rust source files that define the handlers. This can be either a single string literal (e.g., `"src"`) or an array of string literals (e.g., `["src/db", "src"]`). These paths are used to extract type information for the TypeScript client. Ensure that these paths are correct and point to the appropriate directories. The default of `"src"` should handle most cases appropriately.
+/// - `output`: A required parameter that specifies the path to the output file where the generated TypeScript client code will be written. Ensure that this path is correct and points to a writable location.
+///
+/// ## Note
+///
+/// - **Prefix URL:** The `prefix` parameter is used to prepend a common base path to all routes. It should not end with a `/`. If the prefix is not provided, it defaults to an empty string (`""`), meaning no prefix will be added.
+///
+/// ## Example
+///
+/// ```rust, ignore
+/// use axum::Router;
+/// use gluer::{generate, metadata};
+///
+/// // Define a handler function
+/// #[metadata]
+/// fn root() -> String {
+///     "root".to_string()
+/// }
+///
+/// // Use the `generate` macro to create the API client and router
+/// let _app: Router<()> = generate! {
+///     routes = { // Defines the API routes
+///         "/" = get(root), // Route for the root path, using the `root` handler for GET requests
+///     },
+///     files = "src", // Specifies a single directory containing the handler implementations
+///     // This can be omitted due to being the same as the default value
+///     // You can also specify multiple directories:
+///     // files = ["src/db", "src"],
+///
+///     output = "tests/api.ts", // Specifies the output file for the generated TypeScript client
+/// };
+/// ```
 #[proc_macro]
 pub fn generate(input: pc::TokenStream) -> pc::TokenStream {
     match generate_inner(input.into()) {
@@ -216,34 +150,39 @@ pub fn generate(input: pc::TokenStream) -> pc::TokenStream {
 
 fn generate_inner(input: TokenStream) -> syn::Result<TokenStream> {
     let GenerateArgs {
-        project_paths,
-        path,
-        base,
+        prefix,
+        routes,
+        files,
+        output,
     } = syn::parse2::<GenerateArgs>(input.clone())?;
 
-    let project_paths = project_paths
+    let files = files
         .iter()
         .map(|s: &String| std::path::PathBuf::from(s))
         .collect::<Vec<_>>();
 
-    let mut routes = Vec::new();
+    let parsed_routes: Vec<Route> = routes
+        .clone()
+        .unwrap()
+        .iter()
+        .flat_map(|f| f.to_routes())
+        .collect();
     let mut fn_infos = HashMap::new();
     let mut type_infos = HashMap::new();
 
-    let mut parsed_ts = ParsedTypeScript::filled(&base);
+    let mut parsed_ts = ParsedTypeScript::filled(&prefix);
     let mut needs_query_parser = false;
 
     fn process_paths(
-        project_paths: &[std::path::PathBuf],
-        routes: &mut Vec<Route>,
+        files: &[std::path::PathBuf],
         fn_infos: &mut HashMap<String, FnInfo>,
         type_infos: &mut HashMap<String, TypeCategory>,
     ) -> syn::Result<()> {
-        for path in project_paths {
+        for path in files {
             if path.is_dir() {
-                process_single_dir(path, routes, fn_infos, type_infos)?;
-            } else if path.extension().and_then(|s| s.to_str()) == Some("rs") {
-                process_single_file(path, routes, fn_infos, type_infos)?;
+                process_single_dir(path, fn_infos, type_infos)?;
+            } else if path.extension().and_then(|s: &std::ffi::OsStr| s.to_str()) == Some("rs") {
+                process_single_file(path, fn_infos, type_infos)?;
             } else {
                 return Err(s_err(
                     proc_macro2::Span::call_site(),
@@ -259,7 +198,6 @@ fn generate_inner(input: TokenStream) -> syn::Result<TokenStream> {
 
     fn process_single_dir(
         dir: &std::path::Path,
-        routes: &mut Vec<Route>,
         fn_infos: &mut HashMap<String, FnInfo>,
         type_infos: &mut HashMap<String, TypeCategory>,
     ) -> syn::Result<()> {
@@ -277,9 +215,9 @@ fn generate_inner(input: TokenStream) -> syn::Result<TokenStream> {
             })?;
             let path = entry.path();
             if path.is_dir() {
-                process_single_dir(&path, routes, fn_infos, type_infos)?;
+                process_single_dir(&path, fn_infos, type_infos)?;
             } else if path.extension().and_then(|s| s.to_str()) == Some("rs") {
-                process_single_file(&path, routes, fn_infos, type_infos)?;
+                process_single_file(&path, fn_infos, type_infos)?;
             }
         }
         Ok(())
@@ -287,7 +225,6 @@ fn generate_inner(input: TokenStream) -> syn::Result<TokenStream> {
 
     fn process_single_file(
         path: &std::path::Path,
-        routes: &mut Vec<Route>,
         fn_infos: &mut HashMap<String, FnInfo>,
         type_infos: &mut HashMap<String, TypeCategory>,
     ) -> syn::Result<()> {
@@ -298,13 +235,12 @@ fn generate_inner(input: TokenStream) -> syn::Result<TokenStream> {
             )
         })?;
         let syntax = syn::parse_file(&content)?;
-        process_syntax(&syntax.items, routes, fn_infos, type_infos)?;
+        process_syntax(&syntax.items, fn_infos, type_infos)?;
         Ok(())
     }
 
     fn process_syntax(
         syntax: &Vec<Item>,
-        routes: &mut Vec<Route>,
         fn_infos: &mut HashMap<String, FnInfo>,
         type_infos: &mut HashMap<String, TypeCategory>,
     ) -> syn::Result<()> {
@@ -355,30 +291,6 @@ fn generate_inner(input: TokenStream) -> syn::Result<TokenStream> {
                     }
                 }
                 Item::Fn(item_fn) => {
-                    for stmt in &item_fn.block.stmts {
-                        if let Stmt::Macro(StmtMacro { mac, .. }) = stmt {
-                            if mac.path.is_ident("route") {
-                                let RouteArgs {
-                                    url,
-                                    routes: method_routes,
-                                    ..
-                                } = syn::parse2::<RouteArgs>(mac.tokens.clone())?;
-
-                                for route in method_routes {
-                                    let method = route.method.to_string().to_uppercase();
-                                    let handler = route.handler.to_string();
-                                    let route = Route {
-                                        url: url.value(),
-                                        method: method.clone(),
-                                        handler,
-                                    };
-                                    if !routes.contains(&route) {
-                                        routes.push(route);
-                                    }
-                                }
-                            }
-                        }
-                    }
                     for attr in &item_fn.attrs {
                         if attr.path().is_ident("metadata") {
                             let metadata_attr = attr
@@ -398,7 +310,6 @@ fn generate_inner(input: TokenStream) -> syn::Result<TokenStream> {
                             .as_ref()
                             .unwrap_or(&(Brace::default(), vec![]))
                             .1,
-                        routes,
                         fn_infos,
                         type_infos,
                     )?;
@@ -409,20 +320,20 @@ fn generate_inner(input: TokenStream) -> syn::Result<TokenStream> {
         Ok(())
     }
 
-    process_paths(&project_paths, &mut routes, &mut fn_infos, &mut type_infos)?;
+    process_paths(&files, &mut fn_infos, &mut type_infos)?;
 
-    if routes.is_empty() {
+    if parsed_routes.is_empty() {
         return Err(s_err(
             proc_macro2::Span::call_site(),
-            "No routes found, please use the `route!` macro for defining them",
+            "The routes are empty, please add them in the `routes` field of the `generate!` macro",
         ));
     }
 
-    for route in routes {
+    for route in &parsed_routes {
         let fn_info = fn_infos.get(&route.handler).ok_or(s_err(
             proc_macro2::Span::call_site(),
             format!(
-                "Function '{}' not found, add the `#[metadata] attribute to the definition",
+                "Function '{}' not found, add the `#[metadata]` attribute to the definition and make sure it's included in the `files` of the `generate!` macro",
                 route.handler
             ),
         ))?;
@@ -430,7 +341,7 @@ fn generate_inner(input: TokenStream) -> syn::Result<TokenStream> {
             let ty = type_infos.get(ty).ok_or(s_err(
                 proc_macro2::Span::call_site(),
                 format!(
-                    "Dependency '{}' not found, add the `#[metadata] attribute to the definition",
+                    "Dependency '{}' not found, add the `#[metadata]` attribute to the definition and make sure it's included in the `files` of the `generate!` macro",
                     ty
                 ),
             ))?;
@@ -455,42 +366,179 @@ fn generate_inner(input: TokenStream) -> syn::Result<TokenStream> {
     }
 
     parsed_ts
-        .write_to_file(path)
+        .write_to_file(output.unwrap())
         .map_err(|e| s_err(proc_macro2::Span::call_site(), e))?;
 
-    Ok(quote! {})
+    let routes_quote = MethodRoutes(routes.unwrap());
+
+    Ok(quote! { #routes_quote })
 }
 
 struct GenerateArgs {
-    project_paths: Vec<String>,
-    path: String,
-    base: String,
+    prefix: String,
+    routes: Option<Vec<MethodRouter>>,
+    files: Vec<String>,
+    output: Option<String>,
+}
+
+impl GenerateArgs {
+    fn new() -> Self {
+        Self {
+            prefix: String::new(),
+            routes: None,
+            files: vec![String::from("src")],
+            output: None,
+        }
+    }
 }
 
 impl Parse for GenerateArgs {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let project_paths = if input.peek(syn::token::Bracket) {
-            let content;
-            bracketed!(content in input);
-            let parsed_content: Punctuated<LitStr, Comma> = Punctuated::parse_terminated(&content)?;
-            parsed_content.iter().map(|lit| lit.value()).collect()
-        } else {
-            vec![input.parse::<syn::LitStr>()?.value()]
-        };
-        input.parse::<syn::Token![,]>()?;
-        let path = input.parse::<syn::LitStr>()?.value();
-        input.parse::<syn::Token![,]>()?;
-        let base = input.parse::<syn::LitStr>()?.value();
+        let mut ret = GenerateArgs::new();
 
-        if !input.is_empty() {
-            input.parse::<syn::Token![,]>()?;
+        while !input.is_empty() {
+            let ident = syn::Ident::parse(input)?;
+            <Token![=]>::parse(input)?;
+            match ident.to_string().as_str() {
+                "prefix" => {
+                    ret.prefix = input.parse::<LitStr>()?.value();
+                }
+                "routes" => {
+                    let content;
+                    braced!(content in input);
+                    let parsed_content: Punctuated<MethodRouter, Comma> =
+                        Punctuated::parse_terminated(&content)?;
+                    ret.routes = Some(parsed_content.iter().map(|lit| lit.to_owned()).collect());
+                }
+                "files" => {
+                    ret.files = if input.peek(syn::token::Bracket) {
+                        let content;
+                        bracketed!(content in input);
+                        let parsed_content: Punctuated<LitStr, Comma> =
+                            Punctuated::parse_terminated(&content)?;
+                        parsed_content.iter().map(|lit| lit.value()).collect()
+                    } else {
+                        vec![input.parse::<syn::LitStr>()?.value()]
+                    };
+                }
+                "output" => {
+                    ret.output = Some(input.parse::<LitStr>()?.value());
+                }
+                _ => return Err(s_err(ident.span(), "unknown argument")),
+            };
+            if !input.is_empty() {
+                <Token![,]>::parse(input)?;
+            }
         }
 
-        Ok(GenerateArgs {
-            project_paths,
-            path,
-            base,
-        })
+        if ret.routes.is_none() || ret.output.is_none() {
+            return Err(s_err(
+                proc_macro2::Span::call_site(),
+                "to generate the api both `routes` and `output` fields are required",
+            ));
+        }
+
+        Ok(ret)
+    }
+}
+
+#[derive(Clone)]
+struct MethodRouter {
+    url: LitStr,
+    methods: Vec<Method>,
+}
+
+impl fmt::Debug for MethodRouter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MethodRouter")
+            .field("url", &self.url.value())
+            .field("methods", &self.methods)
+            .finish()
+    }
+}
+
+impl MethodRouter {
+    fn to_routes(&self) -> Vec<Route> {
+        self.methods
+            .iter()
+            .map(|method| Route {
+                url: self.url.value(),
+                method: method.method.to_string(),
+                handler: method.handler.to_string(),
+            })
+            .collect()
+    }
+}
+
+impl Parse for MethodRouter {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let url = input.parse()?;
+        <Token![=]>::parse(input)?;
+        let mut methods = vec![];
+        while !input.is_empty() {
+            methods.push(input.parse()?);
+            if input.peek(Token![.]) {
+                <Token![.]>::parse(input)?;
+            } else {
+                break;
+            }
+        }
+        Ok(MethodRouter { url, methods })
+    }
+}
+
+/// Wrapper over MethodRouter for ToTokens conversion
+struct MethodRoutes(Vec<MethodRouter>);
+
+impl ToTokens for MethodRoutes {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let routes = self.0.iter().map(|route| {
+            let url = &route.url;
+
+            let mut handlers_iter = route.methods.iter();
+            let first_handler = handlers_iter.next().map(|method| {
+                let method_name = &method.method;
+                let handler_name = &method.handler;
+                quote! {
+                    axum::routing::#method_name(#handler_name)
+                }
+            });
+
+            let rest_handlers = handlers_iter.map(|method| {
+                let method_name = &method.method;
+                let handler_name = &method.handler;
+                quote! {
+                    .#method_name(#handler_name)
+                }
+            });
+
+            quote! {
+                .route(#url, #first_handler #(#rest_handlers)*)
+            }
+        });
+
+        let expanded = quote! {
+            axum::Router::new()
+            #(#routes)*
+        };
+
+        tokens.extend(expanded);
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Method {
+    method: syn::Ident,
+    handler: syn::Ident,
+}
+
+impl Parse for Method {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let method = input.parse()?;
+        let content;
+        parenthesized!(content in input);
+        let handler = content.parse()?;
+        Ok(Method { method, handler })
     }
 }
 
@@ -593,7 +641,7 @@ impl FnInfo {
         fn_str.push_str(&generate_docstring(&self.docs, "    "));
         fn_str.push_str(&format!(
             r#"    export async function {fn_name}({params_str}): Promise<{response_type}> {{
-        return fetch_api(`${{BASE}}{url}`, {{
+        return fetch_api(`${{PREFIX}}{url}`, {{
             method: "{method}", {body_assignment}
         }});
     }}
@@ -629,7 +677,7 @@ impl TypeCategory {
                     Self::resolving_dependencies(
                         dependencies.get(dependency).ok_or(s_err(
                             proc_macro2::Span::call_site(),
-                            format!("Dependency '{}' not found, add the `#[metadata] attribute to the definition", dependency),
+                            format!("Dependency '{}' not found, add the `#[metadata]` attribute to the definition and make sure it's included in the `files` of the `generate!` macro", dependency),
                         ))?,
                         dependencies,
                         parsed_ts,
@@ -661,7 +709,7 @@ impl TypeCategory {
                     Self::resolving_dependencies(
                         dependencies.get(dependency).ok_or(s_err(
                             proc_macro2::Span::call_site(),
-                            format!("Dependency '{}' not found, add the `#[metadata] attribute to the definition", dependency),
+                            format!("Dependency '{}' not found, add the `#[metadata]` attribute to the definition and make sure it's included in the `files` of the `generate!` macro", dependency),
                         ))?,
                         dependencies,
                         parsed_ts,
@@ -1104,7 +1152,7 @@ impl ApiType {
 }
 
 struct ParsedTypeScript<'a> {
-    base: String,
+    prefix: String,
     basic_functions: String,
     namespace_start: &'a str,
     namespace_end: &'a str,
@@ -1116,13 +1164,13 @@ struct ParsedTypeScript<'a> {
 
 impl<'a> ParsedTypeScript<'a> {
     fn new(
-        base: String,
+        prefix: String,
         basic_functions: String,
         namespace_start: &'a str,
         namespace_end: &'a str,
     ) -> Self {
         Self {
-            base,
+            prefix,
             basic_functions,
             namespace_start,
             namespace_end,
@@ -1133,8 +1181,8 @@ impl<'a> ParsedTypeScript<'a> {
         }
     }
 
-    fn filled(base: &'a str) -> ParsedTypeScript {
-        let base = format!("const BASE = '{}';\n", base);
+    fn filled(prefix: &'a str) -> ParsedTypeScript {
+        let prefix = format!("const PREFIX = '{}';\n", prefix);
         let basic_functions =
             r#"    async function fetch_api(endpoint: string, options: RequestInit): Promise<any> {
         const response = await fetch(endpoint, {
@@ -1155,7 +1203,7 @@ impl<'a> ParsedTypeScript<'a> {
         let namespace_start = "namespace api {\n";
         let namespace_end = "}\n\nexport default api;";
 
-        ParsedTypeScript::new(base, basic_functions, namespace_start, namespace_end)
+        ParsedTypeScript::new(prefix, basic_functions, namespace_start, namespace_end)
     }
 
     fn fill_query_parser(&mut self) {
@@ -1177,7 +1225,7 @@ impl<'a> ParsedTypeScript<'a> {
         // todo: errors
         let mut file = fs::File::create(path)?;
 
-        file.write_all(self.base.as_bytes())?;
+        file.write_all(self.prefix.as_bytes())?;
         file.write_all(b"\n")?;
 
         file.write_all(self.namespace_start.as_bytes())?;

@@ -1,9 +1,8 @@
 use axum::{
     extract::{Path, Query},
-    routing::get,
     Json, Router,
 };
-use gluer::{generate, metadata, route};
+use gluer::{generate, metadata};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -86,13 +85,14 @@ type S = String;
 
 #[tokio::test]
 async fn main_test() {
-    let mut _app: Router = Router::new();
-
-    route!(_app, "/:p", get(fetch_root).post(add_root));
-    route!(_app, "/char/:path/metadata/:path", get(get_alphabet));
-
-    // Make sure to change "tests" to "src" when copying this example into a normal project
-    generate!("tests", "tests/api.ts", "");
+    let _app: Router<()> = generate! {
+        routes = { // required
+            "/:p" = get(fetch_root).post(add_root),
+            "/char/:path/metadata/:path" = get(get_alphabet),
+        },
+        files = "tests",// Make sure to change "tests" to "src" when copying this example into a normal project
+        output = "tests/api.ts", //required
+    };
 
     let _listener = tokio::net::TcpListener::bind("127.0.0.1:8080")
         .await
