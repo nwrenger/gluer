@@ -1,4 +1,4 @@
-const BASE = '';
+const PREFIX = '';
 
 namespace api {
     /**
@@ -64,7 +64,7 @@ namespace api {
     }
 
     export async function add_root(path: number, data: Result<Hello<Hello<Huh<Huh<Hello<Age, string>>>, string>, string>>): Promise<Result<string>> {
-        return fetch_api(`${BASE}/${encodeURIComponent(path)}`, {
+        return fetch_api(`${PREFIX}/${encodeURIComponent(path)}`, {
             method: "POST", 
             body: JSON.stringify(data)
         });
@@ -74,13 +74,13 @@ namespace api {
         An example of a simple function with a `Path` and `Query` extractor
     */
     export async function fetch_root(queryMap: Record<string, string>, path: number): Promise<string> {
-        return fetch_api(`${BASE}/${encodeURIComponent(path)}?${new URLSearchParams(queryMap).toString()}`, {
+        return fetch_api(`${PREFIX}/${encodeURIComponent(path)}?${new URLSearchParams(queryMap).toString()}`, {
             method: "GET", 
         });
     }
 
     export async function get_alphabet(pathTuple: [Alphabet, S]): Promise<[Alphabet, S]> {
-        return fetch_api(`${BASE}/char/${encodeURIComponent(pathTuple[0])}/metadata/${encodeURIComponent(pathTuple[1])}`, {
+        return fetch_api(`${PREFIX}/char/${encodeURIComponent(pathTuple[0])}/metadata/${encodeURIComponent(pathTuple[1])}`, {
             method: "GET", 
         });
     }
