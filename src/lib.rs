@@ -156,7 +156,7 @@ fn generate_inner(input: TokenStream) -> syn::Result<TokenStream> {
         routes,
         files,
         output,
-    } = syn::parse2::<GenerateArgs>(input.clone())?;
+    } = syn::parse2(input.clone())?;
 
     let files = files
         .iter()
