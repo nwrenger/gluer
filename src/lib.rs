@@ -102,13 +102,13 @@ impl syn::parse::Parse for MetadataAttr {
     }
 }
 
-/// Generates a TypeScript API client for the frontend from the API routes.
+/// Generates a TypeScript API client and axum compatible router.
 ///
 /// ## Parameters
 ///
 /// - `prefix`: An optional parameter that allows you to specify a prefix for all generated routes. This can be useful if your API is hosted under a common base path (e.g., `/api`).
-/// - `routes`: A required parameter that specifies the API routes for which the TypeScript client will be generated. Each route is defined by a URL path (which can include parameters) followed by one or more HTTP methods (e.g., `get`, `post`) and their corresponding handler functions.
-/// - `files`: An optional parameter that specifies the directory or directories containing the Rust source files that define the handlers. This can be either a single string literal (e.g., `"src"`) or an array of string literals (e.g., `["src/db", "src"]`). These paths are used to extract type information for the TypeScript client. Ensure that these paths are correct and point to the appropriate directories. The default of `"src"` should handle most cases appropriately.
+/// - `routes`: A required parameter that specifies the API routes for which the TypeScript client and resulting Router will be generated. Each route is defined by a URL path (which can include parameters) followed by one or more HTTP methods (e.g., `get`, `post`) and their corresponding handler functions.
+/// - `files`: An optional parameter that specifies the directory or directories containing the Rust source files that define the handlers and dependencies. This can be either a single string literal (e.g., `"src"`) or an array of string literals (e.g., `["src/db", "src"]`). These paths are used to extract type information for the TypeScript client. Ensure that these paths are correct and point to the appropriate directories. The default of `"src"` should handle most cases appropriately.
 /// - `output`: A required parameter that specifies the path to the output file where the generated TypeScript client code will be written. Ensure that this path is correct and points to a writable location.
 ///
 /// ## Note
@@ -129,6 +129,7 @@ impl syn::parse::Parse for MetadataAttr {
 ///
 /// // Use the `generate` macro to create the API client and router
 /// let _app: Router<()> = generate! {
+///     // prefix = "" // Can be omitted by being the same as the default value
 ///     routes = { // Defines the API routes
 ///         "/" = get(root), // Route for the root path, using the `root` handler for GET requests
 ///     },
