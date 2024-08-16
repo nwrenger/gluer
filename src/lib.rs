@@ -129,7 +129,8 @@ impl syn::parse::Parse for MetadataAttr {
 ///
 /// // Use the `generate` macro to create the API client and router
 /// let _app: Router<()> = generate! {
-///     // prefix = "" // Can be omitted by being the same as the default value
+///     prefix = "" // Sets the prefix to `""`
+///     // This can be omitted due to being the same as the default value
 ///     routes = { // Defines the API routes
 ///         "/" = get(root), // Route for the root path, using the `root` handler for GET requests
 ///     },
