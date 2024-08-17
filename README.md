@@ -27,7 +27,7 @@ gluer = "0.8.1"
 - Generate a TypeScript file with:
   - A custom base URL
   - Functions to access the api, infers input and output types for that
-  - Structs as Interfaces, supports changing the generated type via the `#[meta(...)]` attribute
+  - Structs as Interfaces, supports changing the generated type via the `#[meta(...)]` attribute to be skipped, a different rust type or an optional (the `?` in TypeScript)
   - Enums as the TypeScript equivalent, enums with values are not supported, because of the lack of that feature in TypeScript
   - Types as the TypeScript equivalent
   - Supports converting docstring to the TypeScript equivalent, even of fields of structs and enums
