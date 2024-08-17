@@ -67,10 +67,14 @@ struct Book {
     // Sometimes you don't have access to certain data types,
     // so you can override them using `#[meta(into = Type)]`
     // or skip them entirely via `#[meta(skip)]`
+    // or set them to be optional via `#[meta(optional)]`
+    // (-> an interface field with a `?`)
     #[meta(into = String)]
     user: User,
     #[meta(skip)]
     borrower: User,
+    #[meta(optional)]
+    reservation: String,
 }
 
 // Everything you want to use, even if it's just a
