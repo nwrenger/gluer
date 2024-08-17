@@ -269,7 +269,7 @@ async fn main() {
     let _listener = tokio::net::TcpListener::bind("127.0.0.1:8080")
         .await
         .unwrap();
-    // starts the server, comment in and rename `_listener` to run it
+    // starts the server, comment in and rename `_app` and `_listener` to run it
     // axum::serve(listener, app).await.unwrap();
 }
 ```
