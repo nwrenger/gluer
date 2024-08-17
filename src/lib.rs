@@ -108,7 +108,7 @@ impl syn::parse::Parse for MetadataAttr {
 ///
 /// - `prefix`: An optional parameter that allows you to specify a prefix for all generated routes. This can be useful if your API is hosted under a common base path (e.g., `/api`).
 /// - `routes`: A required parameter that specifies the API routes for which the TypeScript client and resulting Router will be generated. Each route is defined by a URL path (which can include parameters) followed by one or more HTTP methods (e.g., `get`, `post`) and their corresponding handler functions.
-/// - `files`: An optional parameter that specifies the directory or directories containing the Rust source files that define the handlers and dependencies. This can be either a single string literal (e.g., `"src"`) or an array of string literals (e.g., `["src/db", "src"]`). These paths are used to extract type information for the TypeScript client. Ensure that these paths are correct and point to the appropriate directories. The default of `"src"` should handle most cases appropriately.
+/// - `files`: An optional parameter that specifies the files containing the Rust source files that define the handlers and dependencies. This can be either a single string literal (e.g., `"src"`) or an array of string literals (e.g., `["src/db", "src", "src/error.rs"]`). These paths are used to extract type information for the TypeScript client. Ensure that these paths are correct and point to the appropriate directories or files. The default of `"src"` should handle most cases appropriately.
 /// - `output`: A required parameter that specifies the path to the output file where the generated TypeScript client code will be written. Ensure that this path is correct and points to a writable location.
 ///
 /// ## Note
@@ -496,31 +496,21 @@ impl ToTokens for MethodRoutes {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let routes = self.0.iter().map(|route| {
             let url = &route.url;
-
-            let mut handlers_iter = route.methods.iter();
-            let first_handler = handlers_iter.next().map(|method| {
+            let handlers = route.methods.iter().map(|method| {
                 let method_name = &method.method;
                 let handler_name = &method.handler;
                 quote! {
-                    axum::routing::#method_name(#handler_name)
-                }
-            });
-
-            let rest_handlers = handlers_iter.map(|method| {
-                let method_name = &method.method;
-                let handler_name = &method.handler;
-                quote! {
-                    .#method_name(#handler_name)
+                    #method_name(#handler_name)
                 }
             });
 
             quote! {
-                .route(#url, #first_handler #(#rest_handlers)*)
+                .route(#url, #(#handlers).*)
             }
         });
 
         let expanded = quote! {
-            axum::Router::new()
+            Router::new()
             #(#routes)*
         };
 

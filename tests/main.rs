@@ -1,5 +1,6 @@
 use axum::{
     extract::{Path, Query},
+    routing::get,
     Json, Router,
 };
 use gluer::{generate, metadata};
