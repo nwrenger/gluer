@@ -1289,9 +1289,11 @@ impl RustType {
 
         match &self {
             Self::BuiltIn(ty) => match ty.as_str() {
-                "str" | "String" => return Ok(ApiType::Unknown(String::from("string"))),
+                "char" | "str" | "String" | "u128" | "i128" | "f128" => {
+                    return Ok(ApiType::Unknown(String::from("string")))
+                }
                 "usize" | "isize" | "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64"
-                | "f32" | "f64" => return Ok(ApiType::Unknown(String::from("number"))),
+                | "f16" | "f32" | "f64" => return Ok(ApiType::Unknown(String::from("number"))),
                 "bool" => return Ok(ApiType::Unknown(String::from("boolean"))),
                 "()" => return Ok(ApiType::Unknown(String::from("void"))),
                 _ => {}
@@ -1435,7 +1437,7 @@ impl RustType {
 
 const RUST_TYPES: &[&str] = &[
     "bool", "char", "str", "u8", "u16", "u32", "u64", "u128", "i8", "i16", "i32", "i64", "i128",
-    "usize", "isize", "f32", "f64", "String",
+    "usize", "isize", "f16", "f32", "f64", "f128", "String",
 ];
 
 const SKIP_TYPES: &[&str] = &["State", "Headers", "Bytes", "Request", "Extension"];
@@ -1510,7 +1512,7 @@ fn to_rust_type(ty: &syn::Type, custom: &[String]) -> Option<RustType> {
 
         syn::Type::Tuple(type_tuple) => {
             if type_tuple.elems.is_empty() {
-                return Some(RustType::BuiltIn("()".to_string()));
+                return Some(RustType::BuiltIn(String::from("()")));
             }
             let inner_types: Vec<RustType> = type_tuple
                 .elems

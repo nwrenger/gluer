@@ -12,7 +12,11 @@ namespace api {
     }
 
     export interface AgeInner {
-        age: number;
+        /**
+            It gets converted as a string on the TypeScript side
+            because a ts `number` cannot be greater than 64 bits
+        */
+        age: string;
     }
 
     export interface Hello<T, S> {

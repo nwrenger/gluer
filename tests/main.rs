@@ -34,7 +34,10 @@ struct Age {
 #[metadata]
 #[derive(Serialize, Deserialize, Default)]
 struct AgeInner {
-    age: u8,
+    // Thats quite big and also supported
+    /// It gets converted as a string on the TypeScript side
+    /// because a ts `number` cannot be greater than 64 bits
+    age: u128,
 }
 
 #[metadata]
