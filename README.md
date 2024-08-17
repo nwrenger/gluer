@@ -31,7 +31,7 @@ gluer = "0.8.0"
   - Enums as the TypeScript equivalent, enums with values are not supported, because of the lack of that feature in TypeScript
   - Types as the TypeScript equivalent
   - Supports converting docstring to the TypeScript equivalent, even of fields of structs and enums
-  - Tuples as the TypeScript equivalent, also supports tuples in `axum`'s path 
+  - Tuples as the TypeScript equivalent, also supports tuples in `axum`'s path
   - Supports converting rust specific types as `Result` as custom ones using the `custom = [Type, *]` attribute
   - Generics, even multiple and nested ones, look for that [here](#complete-example)
   - No extra dependencies
@@ -59,13 +59,13 @@ use serde::{Serialize, Deserialize};
 struct Book {
     /// This will also be converted to a docstring
     name: String,
-    // When you use types as `Result`, `Option` or `Vec` the 
+    // When you use types as `Result`, `Option` or `Vec` the
     // macro sees them as a default rust type, meaning when
     // you wanting to use custom ones you have to specify that
     // via the `custom` attribute on `#[metadata]`
     some_result: Result<String>,
-    // Sometimes you don't have access to certain data types, 
-    // so you can override them using `#[meta(into = Type)]` 
+    // Sometimes you don't have access to certain data types,
+    // so you can override them using `#[meta(into = Type)]`
     // or skip them entirely via `#[meta(skip)]`
     #[meta(into = String)]
     user: User,
@@ -114,7 +114,7 @@ async fn path(Path(p): Path<(String, String)>) -> Json<(String, String)> {
     p.into()
 }
 
-// Supports enums 
+// Supports enums
 #[metadata]
 async fn book_state() -> Json<BookState> {
     BookState::default().into()
