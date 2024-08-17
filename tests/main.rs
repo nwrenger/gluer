@@ -27,7 +27,8 @@ pub struct Hello<T: Serialize, S> {
 #[metadata]
 #[derive(Serialize, Deserialize, Default)]
 struct Age {
-    /// Even supports docstring on fields
+    /// Even supports docstring on fields and optional fields
+    #[meta(optional)]
     age: AgeInner,
 }
 

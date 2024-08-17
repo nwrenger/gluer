@@ -6,9 +6,9 @@ namespace api {
     */
     export interface Age {
         /**
-            Even supports docstring on fields
+            Even supports docstring on fields and optional fields
         */
-        age: AgeInner;
+        age?: AgeInner;
     }
 
     export interface AgeInner {

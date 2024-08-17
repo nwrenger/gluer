@@ -32,6 +32,7 @@ fn s_err(span: proc_macro2::Span, msg: impl fmt::Display) -> syn::Error {
 ///
 /// - `#[meta(into = Type)]`: Specify a type to convert the field into.
 /// - `#[meta(skip)]`: Skip the field.
+/// - `#[meta(optional)]`: Make a field optional.
 #[proc_macro_attribute]
 pub fn metadata(args: pc::TokenStream, input: pc::TokenStream) -> pc::TokenStream {
     match metadata_inner(args.into(), input.into()) {
@@ -49,6 +50,7 @@ fn metadata_inner(args: TokenStream, input: TokenStream) -> syn::Result<TokenStr
         syn::Item::Struct(mut struct_item) => {
             // Clean off all "meta" attributes
             for field in struct_item.fields.iter_mut() {
+                parse_field_attr(&field.attrs)?;
                 field.attrs.retain(|attr| !attr.path().is_ident("meta"));
             }
             quote! { #struct_item }
@@ -760,10 +762,22 @@ fn generate_struct(
 
             let meta_attr = match parse_field_attr(&field.attrs) {
                 Ok(meta_attr) => meta_attr,
-                Err(e) => return Some(Err(e)),
+                Err(_) => {
+                    return Some(Err(s_err(
+                        field.span(),
+                        format!(
+                            "An error occurred when parsing field attributes on struct '{}'",
+                            struct_name
+                        ),
+                    )))
+                }
             };
 
-            let MetaAttr { into, skip } = meta_attr;
+            let MetaAttr {
+                into,
+                skip,
+                optional,
+            } = meta_attr;
 
             let field_ty = if let Some(conv_fn) = into.clone() {
                 conv_fn
@@ -781,6 +795,7 @@ fn generate_struct(
                     name: ident,
                     ty,
                     docs,
+                    optional,
                 }))
             } else {
                 Some(Err(s_err(field.span(), "Unsupported Rust Type")))
@@ -800,12 +815,14 @@ fn generate_struct(
 struct MetaAttr {
     into: Option<syn::Type>,
     skip: bool,
+    optional: bool,
 }
 
 fn parse_field_attr(attrs: &[syn::Attribute]) -> syn::Result<MetaAttr> {
     let mut meta_attr = MetaAttr {
         into: None,
         skip: false,
+        optional: false,
     };
 
     for attr in attrs {
@@ -825,8 +842,20 @@ fn parse_field_attr(attrs: &[syn::Attribute]) -> syn::Result<MetaAttr> {
                 meta_attr.skip = true;
                 return Ok(());
             }
-            Err(meta.error("Expected #[meta(into = Type)] or #[meta(skip)]"))
+
+            if meta.path.is_ident("optional") {
+                meta_attr.optional = true;
+                return Ok(());
+            }
+            Err(meta.error("Expected #[meta(into = Type)], #[meta(skip)] or #[meta(optional)]"))
         })?;
+    }
+
+    if (meta_attr.into.is_some() || meta_attr.optional) && meta_attr.skip {
+        return Err(s_err(
+            proc_macro2::Span::call_site(),
+            "skip allows no further arguments",
+        ));
     }
 
     Ok(meta_attr)
@@ -860,6 +889,7 @@ fn generate_enum(item_enum: syn::ItemEnum, _: MetadataAttr) -> syn::Result<TypeI
                 name: ident,
                 ty: RustType::None,
                 docs,
+                optional: false,
             })
         })
         .collect::<syn::Result<Vec<_>>>()?;
@@ -897,6 +927,7 @@ fn generate_type(item_type: syn::ItemType, metadata_attr: MetadataAttr) -> syn::
             name: String::new(),
             ty,
             docs: vec![],
+            optional: false,
         }],
         dependencies,
         docs,
@@ -948,6 +979,7 @@ fn generate_function(item_fn: syn::ItemFn, metadata_attr: MetadataAttr) -> syn::
             name: pat.clone(),
             ty: ty.clone(),
             docs: vec![],
+            optional: false,
         })
         .collect();
 
@@ -1048,7 +1080,12 @@ impl TypeInfo {
             let ty = field
                 .ty
                 .to_api_type(&self.generics, interfaces, enum_types, type_types)?;
-            interface.push_str(&format!("        {}: {};\n", field.name, ty.unwrap()));
+            interface.push_str(&format!(
+                "        {}{}: {};\n",
+                field.name,
+                if field.optional { "?" } else { "" },
+                ty.unwrap()
+            ));
         }
         interface.push_str("    }\n");
         Ok(interface)
@@ -1118,6 +1155,7 @@ struct Field {
     name: String,
     ty: RustType,
     docs: Vec<String>,
+    optional: bool,
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Debug)]
