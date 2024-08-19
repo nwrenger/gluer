@@ -1484,7 +1484,7 @@ impl RustType {
 
     /// Joins generics into a string for TypeScript syntax together
     fn join_generic(
-        tys: &[RustType],
+        tys: &[Self],
         generics: &[String],
         interfaces: &BTreeMap<String, String>,
         enum_types: &BTreeMap<String, String>,
@@ -1529,28 +1529,28 @@ impl RustType {
     }
 
     /// Returns an optional Rust Type, if `None` the type needs to be skipped
-    fn from_tokens(ty: &syn::Type, custom: &[String]) -> Option<RustType> {
+    fn from_tokens(ty: &syn::Type, custom: &[String]) -> Option<Self> {
         match ty {
             syn::Type::Path(type_path) => {
                 let segment = type_path.path.segments.last().unwrap();
                 let ident = &segment.ident;
 
                 if Self::is_builtin_type(ident) && !Self::is_custom(ident, custom) {
-                    Some(RustType::BuiltIn(ident.to_string()))
+                    Some(Self::BuiltIn(ident.to_string()))
                 } else if Self::is_skip_type(ident) && !Self::is_custom(ident, custom) {
                     None
                 } else if Self::is_builtin_generic(ident) && !Self::is_custom(ident, custom) {
                     if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
                         let inner_types = Self::extract_inner_types(args, custom);
-                        Some(RustType::Generic(ident.to_string(), inner_types))
+                        Some(Self::Generic(ident.to_string(), inner_types))
                     } else {
-                        Some(RustType::Generic(ident.to_string(), vec![]))
+                        Some(Self::Generic(ident.to_string(), vec![]))
                     }
                 } else if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
                     let inner_types = Self::extract_inner_types(args, custom);
-                    Some(RustType::CustomGeneric(ident.to_string(), inner_types))
+                    Some(Self::CustomGeneric(ident.to_string(), inner_types))
                 } else {
-                    Some(RustType::Custom(ident.to_string()))
+                    Some(Self::Custom(ident.to_string()))
                 }
             }
             syn::Type::Reference(syn::TypeReference { elem, .. })
@@ -1559,18 +1559,18 @@ impl RustType {
 
             syn::Type::Tuple(type_tuple) => {
                 if type_tuple.elems.is_empty() {
-                    return Some(RustType::BuiltIn(String::from("()")));
+                    return Some(Self::BuiltIn(String::from("()")));
                 }
-                let inner_types: Vec<RustType> = type_tuple
+                let inner_types: Vec<Self> = type_tuple
                     .elems
                     .iter()
                     .filter_map(|t| Self::from_tokens(t, custom))
                     .collect();
-                Some(RustType::Tuple(inner_types))
+                Some(Self::Tuple(inner_types))
             }
             syn::Type::Slice(syn::TypeSlice { elem, .. })
             | syn::Type::Array(syn::TypeArray { elem, .. }) => Self::from_tokens(elem, custom)
-                .map(|inner| RustType::Generic("Vec".to_string(), vec![inner])),
+                .map(|inner| Self::Generic("Vec".to_string(), vec![inner])),
             _ => None,
         }
     }
@@ -1579,7 +1579,7 @@ impl RustType {
     fn extract_inner_types(
         args: &syn::AngleBracketedGenericArguments,
         custom: &[String],
-    ) -> Vec<RustType> {
+    ) -> Vec<Self> {
         args.args
             .iter()
             .filter_map(|arg| {
