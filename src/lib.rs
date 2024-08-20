@@ -636,9 +636,10 @@ impl FnInfo {
                         None
                     }
                 }
-                syn::FnArg::Receiver(_) => {
-                    Some(Err(s_err(param.span(), "Receiver parameter not allowed")))
-                }
+                syn::FnArg::Receiver(_) => Some(Err(s_err(
+                    param.span(),
+                    format!("Receiver parameter in function '{}' not allowed", name),
+                ))),
             })
             .collect::<syn::Result<Vec<_>>>()?;
 
@@ -648,7 +649,10 @@ impl FnInfo {
                     process_rust_type(&rust_type, &mut dependencies, &[]);
                     rust_type
                 } else {
-                    return Err(s_err(ty.span(), "Unsupported return type"));
+                    return Err(s_err(
+                        ty.span(),
+                        format!("Unsupported return type in function '{}'", name),
+                    ));
                 }
             }
             syn::ReturnType::Default => RustType::BuiltIn("()".to_string()),
