@@ -28,6 +28,11 @@ namespace api {
         huh: T;
     }
 
+    export interface QueryOptions {
+        id: number;
+        query: string;
+    }
+
     export enum Alphabet {
         A = "A",
         B = "B",
@@ -67,6 +72,20 @@ namespace api {
 		}
     }
 
+    function query_str(params: Record<string, any>): string {
+		if (params) {
+			let data: Record<string, string> = {};
+			for (let key in params) {
+				if (params[key] != null) data[key] = params[key].toString();
+			}
+			return '?' + new URLSearchParams(data).toString();
+		}
+		return '';
+	}
+
+    /**
+        Docstrings for functions are also supported
+    */
     export async function add_root(path: number, data: Result<Hello<Hello<Huh<Huh<Hello<Age, string>>>, string>, string>>): Promise<Result<string>> {
         return fetch_api(`${PREFIX}/${encodeURIComponent(path)}`, {
             method: "POST", 
@@ -74,9 +93,12 @@ namespace api {
         });
     }
 
-    /**
-        An example of a simple function with a `Path` and `Query` extractor
-    */
+    export async function fetch_other(query: QueryOptions): Promise<string> {
+        return fetch_api(`${PREFIX}/other${query_str(query)}`, {
+            method: "GET", 
+        });
+    }
+
     export async function fetch_root(queryMap: Record<string, string>, path: number): Promise<string> {
         return fetch_api(`${PREFIX}/${encodeURIComponent(path)}?${new URLSearchParams(queryMap).toString()}`, {
             method: "GET", 

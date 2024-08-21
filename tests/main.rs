@@ -7,10 +7,23 @@ use gluer::{generate, metadata};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// An example of a simple function with a `Path` and `Query` extractor
+// An example of a simple function with a `Path` and a `Query` extractor
 #[metadata]
 async fn fetch_root(Query(test): Query<HashMap<String, String>>, Path(p): Path<usize>) -> String {
     test.get(&p.to_string()).unwrap().clone()
+}
+
+#[metadata]
+#[derive(Deserialize)]
+struct QueryOptions {
+    id: usize,
+    query: String,
+}
+
+// And one with a `Query` extractor using a struct
+#[metadata]
+async fn fetch_other(Query(test): Query<QueryOptions>) -> String {
+    format!("{}: {}", test.id, test.query)
 }
 
 // Generics are supported, multiple even
@@ -48,6 +61,7 @@ struct Huh<T> {
 }
 
 // Even deep nested generics are supported and tagging default rust types as Custom
+/// Docstrings for functions are also supported
 #[metadata(custom = [Result])]
 async fn add_root(
     Path(_): Path<usize>,
@@ -94,6 +108,7 @@ async fn main_test() {
         routes = { // required
             "/:p" = get(fetch_root).post(add_root),
             "/char/:path/metadata/:path" = get(get_alphabet),
+            "/other" = get(fetch_other),
         },
         files = "tests", // Make sure to remove this when copying this example into a normal project
         output = "tests/api.ts", //required
