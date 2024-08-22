@@ -25,10 +25,10 @@ fn s_err(span: proc_macro2::Span, msg: impl fmt::Display) -> syn::Error {
 
 /// Use before structs, functions, enums or types to be findable by the `generate!` macro.
 ///
-/// # Attributes
+/// ## Attributes
 /// - `custom = [Type, *]`: Specify here types which are named equally to std types but are custom.
 ///
-/// # Struct Attributes
+/// ## Struct Attributes
 ///
 /// - `#[meta(into = Type)]`: Specify a type to convert the field into.
 /// - `#[meta(skip)]`: Skip the field.
