@@ -235,9 +235,9 @@ fn generate_inner(input: TokenStream) -> syn::Result<TokenStream> {
     ) -> syn::Result<()> {
         for path in files {
             if path.is_dir() {
-                process_single_dir(path, fn_infos, type_infos)?;
+                process_entries(path, fn_infos, type_infos)?;
             } else if path.extension().and_then(|s: &std::ffi::OsStr| s.to_str()) == Some("rs") {
-                process_single_file(path, fn_infos, type_infos)?;
+                process_file(path, fn_infos, type_infos)?;
             } else {
                 return Err(s_err(
                     proc_macro2::Span::call_site(),
@@ -251,7 +251,7 @@ fn generate_inner(input: TokenStream) -> syn::Result<TokenStream> {
         Ok(())
     }
 
-    fn process_single_dir(
+    fn process_entries(
         dir: &std::path::Path,
         fn_infos: &mut HashMap<String, FnInfo>,
         type_infos: &mut HashMap<String, TypeCategory>,
@@ -270,15 +270,15 @@ fn generate_inner(input: TokenStream) -> syn::Result<TokenStream> {
             })?;
             let path = entry.path();
             if path.is_dir() {
-                process_single_dir(&path, fn_infos, type_infos)?;
+                process_entries(&path, fn_infos, type_infos)?;
             } else if path.extension().and_then(|s| s.to_str()) == Some("rs") {
-                process_single_file(&path, fn_infos, type_infos)?;
+                process_file(&path, fn_infos, type_infos)?;
             }
         }
         Ok(())
     }
 
-    fn process_single_file(
+    fn process_file(
         path: &std::path::Path,
         fn_infos: &mut HashMap<String, FnInfo>,
         type_infos: &mut HashMap<String, TypeCategory>,
