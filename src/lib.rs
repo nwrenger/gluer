@@ -743,6 +743,7 @@ impl FnInfo {
                 .join("/");
         } else if params_str.contains("path") {
             url = url.split(":").next().unwrap().to_string();
+            url = url.split("{").next().unwrap().to_string();
             url += "${encodeURIComponent(path)}";
         }
 
