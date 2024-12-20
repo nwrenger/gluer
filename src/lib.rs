@@ -732,7 +732,7 @@ impl FnInfo {
             url = url
                 .split("/")
                 .map(|part| {
-                    if part.starts_with(":") {
+                    if part.starts_with(':') || part.starts_with('{') {
                         i += 1;
                         format!("${{encodeURIComponent(pathTuple[{}])}}", i - 1)
                     } else {
@@ -1238,7 +1238,7 @@ impl<'a> ParsedTypeScript<'a> {
     }
 
     /// Creates the `ParsedTypeScript` struct with a few default stuff
-    fn filled(prefix: &'a str) -> ParsedTypeScript {
+    fn filled(prefix: &'a str) -> ParsedTypeScript<'a> {
         let prefix = format!("const PREFIX = '{}';\n", prefix);
         let basic_functions =
             r#"    async function fetch_api(endpoint: string, options: RequestInit): Promise<any> {

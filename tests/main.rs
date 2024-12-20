@@ -106,8 +106,10 @@ type S = String;
 async fn main_test() {
     let _app: Router<()> = generate! {
         routes = { // required
+            // using the old syntax
             "/:p" = get(fetch_root).post(add_root),
-            "/char/:path/metadata/:path" = get(get_alphabet),
+            // using the new syntax
+            "/char/{path}/metadata/{path}" = get(get_alphabet),
             "/other" = get(fetch_other),
         },
         files = "tests", // Make sure to remove this when copying this example into a normal project

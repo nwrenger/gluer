@@ -1,6 +1,6 @@
 [package]
 name = "gluer"
-version = "0.8.2"
+version = "0.8.3"
 edition = "2021"
 authors = ["Nils Wrenger <nils@wrenger.net>"]
 description = "A wrapper for Rust frameworks that eliminates redundant type and function definitions between the frontend and backend"
@@ -15,11 +15,11 @@ license = "MIT"
 proc-macro = true
 
 [dependencies]
-quote = "1.0"
-syn = { version = "2.0.62", features = ["full"] }
-proc-macro2 = "1.0"
+quote = "1.0.37"
+syn = { version = "2.0.90", features = ["full"] }
+proc-macro2 = "1.0.92"
 
 [dev-dependencies]
-axum = "0.7.5"
-tokio = { version = "1.39.2", features = ["macros", "rt-multi-thread"] }
-serde = { version = "1.0", features = ["derive"] }
+axum = "0.7.9"
+tokio = { version = "1.42.0", features = ["macros", "rt-multi-thread"] }
+serde = { version = "1.0.216", features = ["derive"] }
