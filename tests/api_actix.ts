@@ -5,7 +5,7 @@ const PREFIX = "";
 
 namespace api {
 	/**
-        Might want to look into the `api_actix.ts` file to see the docstring for this struct
+        Might want to look into the `api_axum.ts` file to see the docstring for this struct
     */
 	export interface Age {
 		/**
@@ -71,10 +71,11 @@ namespace api {
 			},
 			...options,
 		});
-		if (response.headers.get("Content-Length") === "0") {
+		const text = await response.text();
+		if (!text) {
 			return;
 		} else {
-			return response.json();
+			return JSON.parse(text);
 		}
 	}
 
