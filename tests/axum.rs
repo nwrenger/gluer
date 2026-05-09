@@ -36,7 +36,7 @@ pub struct Hello<T: Serialize, S> {
     vec: Vec<T>,
 }
 
-/// Might want to look into the `api.ts` file to see the docstring for this struct
+/// Might want to look into the `api_axum.ts` file to see the docstring for this struct
 #[metadata]
 #[derive(Serialize, Deserialize, Default)]
 struct Age {
@@ -113,7 +113,7 @@ async fn main_test() {
             "/other" = get(fetch_other),
         },
         files = "tests", // Make sure to remove this when copying this example into a normal project
-        output = "tests/api.ts", //required
+        output = "tests/api_axum.ts", // required
     };
 
     let _listener = tokio::net::TcpListener::bind("127.0.0.1:8080")
