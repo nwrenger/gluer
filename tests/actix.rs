@@ -103,7 +103,7 @@ async fn main_test() {
 
         App::new().service(scope)
     })
-    .bind(("127.0.0.1", 8080))
+    .bind(("127.0.0.1", 0))
     .unwrap();
     // starts the server, comment in and rename `_server` to run it
     // server.run().await.unwrap();

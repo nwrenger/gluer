@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use crate::{
-    codegen::{generated_comment, get_prefix},
+    codegen::{generate_docstring, generated_comment, get_prefix},
     framework::{Framework, RouteParamKind},
     parsing::{
         generate::Route,
@@ -127,18 +127,6 @@ pub fn to_ts_type(ty: &RustType) -> Option<String> {
         }
         _ => None,
     }
-}
-
-fn generate_docstring(docs: &[String], ident: &str) -> String {
-    let mut docstring = String::new();
-    if !docs.is_empty() {
-        docstring.push_str(&format!("{}/**\n", ident));
-        for doc in docs {
-            docstring.push_str(&format!("{}    {}\n", ident, doc));
-        }
-        docstring.push_str(&format!("{}*/\n", ident));
-    }
-    docstring
 }
 
 pub fn generate_route(route: Route, ty: &FnInfo, query_parser: &mut bool) -> Option<String> {

@@ -219,7 +219,7 @@ pub struct Hello<T: Serialize, S> {
     vec: Vec<T>,
 }
 
-/// Might want to look into the `api.ts` file to see the docstring for this struct
+/// Might want to look into the `api_axum.ts` file to see the docstring for this struct
 #[metadata]
 #[derive(Serialize, Deserialize, Default)]
 struct Age {
@@ -289,9 +289,7 @@ type S = String;
 async fn main_test() {
     let _app: Router<()> = generate! {
         routes = { // required
-            // using the old syntax
-            "/:p" = get(fetch_root).post(add_root),
-            // using the new syntax
+            "/{p}" = get(fetch_root).post(add_root),
             "/char/{path}/metadata/{path}" = get(get_alphabet),
             "/other" = get(fetch_other),
         },

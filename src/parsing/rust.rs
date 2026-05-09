@@ -1,6 +1,6 @@
 use quote::ToTokens;
 use std::{fmt::Debug, vec};
-use syn::{spanned::Spanned, LitStr};
+use syn::{spanned::Spanned, Lit};
 
 use crate::{
     framework::Framework,
@@ -271,10 +271,10 @@ impl TypeInfo {
 /// Fills the dependencies for `Custom` and `CustomGeneric` types
 fn process_rust_type(rust_type: &RustType, dependencies: &mut Vec<String>, generics: &[String]) {
     match rust_type {
-        RustType::Custom(inner_ty) => {
-            if !dependencies.contains(inner_ty) && !generics.contains(inner_ty) {
-                dependencies.push(inner_ty.clone());
-            }
+        RustType::Custom(inner_ty)
+            if !dependencies.contains(inner_ty) && !generics.contains(inner_ty) =>
+        {
+            dependencies.push(inner_ty.clone());
         }
         RustType::CustomGeneric(outer_ty, inner_tys) => {
             if !dependencies.contains(outer_ty) && !generics.contains(outer_ty) {
@@ -303,24 +303,21 @@ fn get_docs(attrs: &[syn::Attribute]) -> Vec<String> {
     attrs
         .iter()
         .filter_map(|attr| {
-            if attr.path().is_ident("doc") {
-                Some(
-                    syn::parse::<LitStr>(
-                        attr.meta
-                            .require_name_value()
-                            .ok()?
-                            .value
-                            .to_token_stream()
-                            .into(),
-                    )
-                    .ok()?
-                    .value(),
-                )
-            } else {
-                None
+            if !attr.path().is_ident("doc") {
+                return None;
             }
+
+            let name_value = attr.meta.require_name_value().ok()?;
+            let syn::Expr::Lit(expr_lit) = &name_value.value else {
+                return None;
+            };
+            let Lit::Str(lit_str) = &expr_lit.lit else {
+                return None;
+            };
+
+            Some(lit_str.value())
         })
-        .map(|s| s.trim().to_string())
+        .map(|s| s.trim().trim_start_matches('/').trim().to_string())
         .collect()
 }
 

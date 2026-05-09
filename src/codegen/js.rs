@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use crate::{
-    codegen::{generated_comment, get_prefix},
+    codegen::{generate_docstring, generated_comment, get_prefix},
     parsing::{
         generate::Route,
         rust::{Field, FnInfo, RustType, TypeCategory, TypeInfo},
@@ -38,18 +38,6 @@ const QUERY_PARSER: &str = r#"    function query_str(params) {
         return '';
     }
 "#;
-
-fn generate_docstring(docs: &[String], ident: &str) -> String {
-    let mut docstring = String::new();
-    if !docs.is_empty() {
-        docstring.push_str(&format!("{}/**\n", ident));
-        for doc in docs {
-            docstring.push_str(&format!("{}    {}\n", ident, doc));
-        }
-        docstring.push_str(&format!("{}*/\n", ident));
-    }
-    docstring
-}
 
 fn generate_enum(ty: &TypeInfo) -> String {
     let mut out = String::new();

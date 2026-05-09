@@ -106,9 +106,7 @@ type S = String;
 async fn main_test() {
     let _app: Router<()> = generate! {
         routes = { // required
-            // using the old syntax
-            "/:p" = get(fetch_root).post(add_root),
-            // using the new syntax
+            "/{p}" = get(fetch_root).post(add_root),
             "/char/{path}/metadata/{path}" = get(get_alphabet),
             "/other" = get(fetch_other),
         },
@@ -116,9 +114,7 @@ async fn main_test() {
         output = "tests/api_axum.ts", // required
     };
 
-    let _listener = tokio::net::TcpListener::bind("127.0.0.1:8080")
-        .await
-        .unwrap();
+    let _listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     // starts the server, comment in and rename `_app` and `_listener` to run it
     // axum::serve(listener, app).await.unwrap();
 }

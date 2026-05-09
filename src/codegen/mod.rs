@@ -22,6 +22,18 @@ pub fn get_prefix(prefix: String) -> String {
     format!("const PREFIX = \"{}\";\n", prefix)
 }
 
+pub fn generate_docstring(docs: &[String], ident: &str) -> String {
+    let mut docstring = String::new();
+    if !docs.is_empty() {
+        docstring.push_str(&format!("{}/**\n", ident));
+        for doc in docs {
+            docstring.push_str(&format!("{}    {}\n", ident, doc));
+        }
+        docstring.push_str(&format!("{}*/\n", ident));
+    }
+    docstring
+}
+
 pub fn write_client(
     output: String,
     prefix: String,
