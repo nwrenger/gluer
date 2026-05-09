@@ -16,7 +16,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-gluer = "0.9.0" # specify the framework you want to use, e.g. none for axum and `features = ["actix"], default-features = false` for actix
+gluer = "0.9.1" # specify the framework you want to use, e.g. none for axum and `features = ["actix"], default-features = false` for actix
 ```
 
 ## Features
