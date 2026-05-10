@@ -1,6 +1,6 @@
 [package]
 name = "gluer"
-version = "0.9.1"
+version = "0.9.2"
 edition = "2021"
 authors = ["Nils Wrenger <nils@wrenger.net>"]
 description = "A wrapper for Rust frameworks that eliminates redundant type and function definitions between the frontend and backend"
@@ -9,7 +9,7 @@ categories = ["accessibility", "web-programming", "api-bindings"]
 rust-version = "1.61.0"
 repository = "https://github.com/nwrenger/gluer"
 readme = "README.md"
-license = "GPL-3.0-or-later"
+license = "MIT OR Apache-2.0"
 
 [lib]
 proc-macro = true
